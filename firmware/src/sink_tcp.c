@@ -144,6 +144,24 @@ static void accept_task(void *arg)
             continue;
         }
 
+        // Gate on source readiness: with no USB device present/ready, don't
+        // hand the client a usable session — close immediately so downstream
+        // (FHEM) keeps retrying and only sticks (and re-initialises: re-reads
+        // the attached stick's BaseID/version) once a device is actually
+        // ready.  Without this the listener accepts into an empty bridge and
+        // FHEM re-establishes a STALE session against no device — so a
+        // hot-swap to a different stick would never be picked up.  Combined
+        // with on_source_down (drop on disconnect) this makes the invariant
+        // "a TCP client is connected  ⟺  a live device is behind the bridge".
+        if (!source_ready(bridge_get_source())) {
+            close(cs);
+            static uint32_t s_rej;
+            if ((s_rej++ & 7u) == 0u)
+                ESP_LOGI(TAG, "accept rejected: no source ready "
+                              "(downstream will retry) [#%u]", (unsigned)s_rej);
+            continue;
+        }
+
         // TCP_NODELAY + SO_KEEPALIVE for the new client too.
         setsockopt(cs, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
         int ka = 1;
@@ -216,6 +234,29 @@ static void on_rx(sink_t *s, const uint8_t *data, size_t len)
     xSemaphoreGive(S.mtx);
 }
 
+// Source (USB-Stick) ist weg → alle Client-Verbindungen droppen, damit
+// Downstream (FHEM/nc) den Disconnect sieht, neu connectet und gegen den
+// als nächstes angesteckten Stick neu initialisiert.  Nur `shutdown()` —
+// der zugehörige client_task wacht aus recv() auf, bricht seine Schleife
+// und macht close_client() im Cleanup-Pfad (gleicher Handoff wie der
+// Send-Fehler-Pfad in on_rx; vermeidet Double-Close / fd-Race).
+static void on_source_down(sink_t *s)
+{
+    (void)s;
+    int dropped = 0;
+    xSemaphoreTake(S.mtx, portMAX_DELAY);
+    for (int i = 0; i < SINK_TCP_MAX_CLIENTS; i++) {
+        tcp_client_t *c = &S.clients[i];
+        if (c->active && c->sock >= 0) {
+            shutdown(c->sock, SHUT_RDWR);
+            dropped++;
+        }
+    }
+    xSemaphoreGive(S.mtx);
+    if (dropped)
+        ESP_LOGI(TAG, "source down → dropping %d client(s) for re-init", dropped);
+}
+
 static const char *describe(sink_t *s)
 {
     (void)s;
@@ -233,10 +274,11 @@ static esp_err_t op_start(sink_t *s)
 }
 
 static const struct sink_ops s_ops = {
-    .on_source_rx = on_rx,
-    .start        = op_start,
-    .stop         = NULL,
-    .describe     = describe,
+    .on_source_rx   = on_rx,
+    .start          = op_start,
+    .stop           = NULL,
+    .on_source_down = on_source_down,
+    .describe       = describe,
 };
 
 sink_t *sink_tcp_init(uint16_t port)

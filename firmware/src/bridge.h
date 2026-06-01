@@ -74,6 +74,15 @@ esp_err_t bridge_attach_sink(sink_t *sink, const char *short_id);
 // blockieren.
 void bridge_on_source_rx(void *ctx, const uint8_t *data, size_t len);
 
+// Von der Source-Implementierung aus ihrem Disconnect-Pfad zu rufen wenn
+// das physische Gerät verschwindet (USB-Stick abgesteckt).  Verteilt einen
+// `on_source_down`-Hook an alle Sinks; der TCP-Sink schließt damit seine
+// Client-Verbindungen, sodass Downstream neu connectet und gegen den als
+// nächstes angesteckten Stick neu initialisiert (BaseID/Version/… frisch
+// liest).  Die Source bleibt attached (rx_sink-Verdrahtung unverändert) —
+// das ist KEIN bridge_detach_source.
+void bridge_notify_source_down(void);
+
 // Sink → Source TX-Pfad.  `who` ist der sink_t* des Aufrufers (eigene
 // `&S.self`-Referenz aus dem Sink-Modul); NULL bedeutet "interner /
 // system call" und umgeht den TX-Lock.

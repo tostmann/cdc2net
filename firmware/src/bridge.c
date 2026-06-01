@@ -143,6 +143,23 @@ void bridge_on_source_rx(void *ctx, const uint8_t *data, size_t len)
     }
 }
 
+void bridge_notify_source_down(void)
+{
+    // Sink-Liste unter Mutex snapshotten, dann ohne Lock aufrufen — gleiche
+    // Begründung wie bei bridge_on_source_rx (Sink fasst Sockets an).
+    sink_t *snapshot[BRIDGE_MAX_SINKS];
+    size_t  n;
+    xSemaphoreTake(s_br.mtx, portMAX_DELAY);
+    n = s_br.sink_count;
+    memcpy(snapshot, s_br.sinks, n * sizeof(sink_t *));
+    xSemaphoreGive(s_br.mtx);
+
+    for (size_t i = 0; i < n; i++) {
+        sink_on_source_down(snapshot[i]);
+    }
+    ESP_LOGI(TAG, "source down → %u sink(s) notified", (unsigned)n);
+}
+
 esp_err_t bridge_tx_to_source(sink_t *who, const uint8_t *data, size_t len)
 {
     // Source-Pointer atomar snapshotten — sonst kann der Supervisor

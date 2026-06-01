@@ -100,6 +100,16 @@ struct sink_ops {
     esp_err_t (*start)(sink_t *sink);
     esp_err_t (*stop)(sink_t *sink);
 
+    // Optional: die Source ist weg (USB-Gerät abgesteckt).  Sink soll
+    // pro-Gerät-Downstream-State fallen lassen — der TCP-Sink schließt
+    // seine Client-Verbindungen, damit Downstream (z.B. FHEM) neu
+    // connectet und gegen den DANN angesteckten Stick neu initialisiert.
+    // Die Bridge kann einen Stick-Swap nicht von einem Reconnect
+    // unterscheiden (z.B. teilen sich ESP32-C3 und -C6 die USB-Identität
+    // 303A:1001) — also muss jeder Disconnect als potenzieller Wechsel
+    // gelten.  Darf NULL sein (Sinks ohne pro-Gerät-State, z.B. debug).
+    void (*on_source_down)(sink_t *sink);
+
     const char *(*describe)(sink_t *sink);
 };
 
@@ -116,6 +126,9 @@ static inline esp_err_t sink_start(sink_t *s) {
 }
 static inline esp_err_t sink_stop(sink_t *s) {
     return s && s->ops && s->ops->stop ? s->ops->stop(s) : ESP_OK;
+}
+static inline void sink_on_source_down(sink_t *s) {
+    if (s && s->ops && s->ops->on_source_down) s->ops->on_source_down(s);
 }
 static inline const char *sink_describe(sink_t *s) {
     return s && s->ops && s->ops->describe ? s->ops->describe(s) : "no-sink";

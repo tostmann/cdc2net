@@ -154,6 +154,13 @@ static void stick_task(void *arg)
         S.cdc       = NULL;
         cdc_acm_host_close(cdc);
         ESP_LOGI(TAG, "CUL closed; waiting for reconnect");
+        // Device is gone — tell the bridge so sinks drop per-device state.
+        // The raw-TCP sink closes its client connections, so downstream
+        // (FHEM) reconnects and re-initialises against whatever stick is
+        // attached next.  The bridge can't tell a swap from a reconnect
+        // (e.g. C3/C6 both enumerate as 303A:1001), so every disconnect
+        // must invalidate the downstream session.
+        bridge_notify_source_down();
     }
 }
 
