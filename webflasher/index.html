@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CDC2NET — Web Flasher</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="One-click ESP32-S3 flasher for CDC2NET — a transparent USB-Host-CDC to raw-TCP network bridge for CUL / TUL / EUL sticks.">
+<style>
+  :root {
+    --bg:#f4f6f8; --card:#fff; --ink:#1d2733; --mute:#6b7785;
+    --ok:#1f7a3a; --warn:#b86c00; --line:#dfe4ea;
+    --accent:#1565a8;            /* busware blue */
+    --c-usb:#1565a8; --c-net:#0e8a9c; --c-pipe:#2e8b3d; --c-fw:#b8920a;
+    --header:#1d2733;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system,"Segoe UI",system-ui,sans-serif;
+         max-width: 54em; margin: 0 auto; padding: 0 0 2em;
+         color: var(--ink); background: var(--bg); line-height: 1.5; }
+  header { background: var(--header); color:#fff; padding: 1.1em 1.3em;
+           display:flex; align-items:center; gap:1em; flex-wrap:wrap; }
+  header img { height: 38px; width:auto; }
+  header .t { font-weight:600; font-size:1.05em; letter-spacing:.02em; }
+  header .t small { display:block; color:#9fb0c0; font-weight:400; font-size:.82em; }
+  main { padding: 0 1em; }
+  h2 { color: var(--accent); margin-top: 1.8em; font-size: 1.2em; }
+  p  { margin: .6em 0; }
+  a  { color: var(--accent); }
+  code { background:#eef2f6; padding:.1em .35em; border-radius:3px;
+         font-family: ui-monospace,Menlo,monospace; font-size:.9em; }
+  pre  { background:#eef2f6; padding:.8em 1em; border-radius:6px; overflow:auto; }
+  pre code { background:none; padding:0; }
+  .panel { background: var(--card); border: 1px solid var(--line);
+           border-left: 4px solid var(--accent);
+           border-radius: 8px; padding: 1.1em 1.3em; margin: 1.1em 0; }
+  .panel.flash { text-align: center; border-left-color: var(--c-pipe); }
+  esp-web-install-button { --esp-tools-button-color: var(--accent);
+                           --esp-tools-button-text-color: #fff; }
+  .tiles { display:grid; grid-template-columns: repeat(auto-fit,minmax(11em,1fr));
+           gap:.7em; margin-top:1em; }
+  .tile { background:var(--card); border:1px solid var(--line);
+          border-top:3px solid var(--mute); border-radius:6px; padding:.7em .9em; }
+  .tile.usb  { border-top-color: var(--c-usb); }
+  .tile.net  { border-top-color: var(--c-net); }
+  .tile.pipe { border-top-color: var(--c-pipe); }
+  .tile.fw   { border-top-color: var(--c-fw); }
+  .tile .h { font-weight:600; font-size:.95em; }
+  .tile .d { color:var(--mute); font-size:.85em; margin-top:.25em; }
+  .warn { background:#fdf3e3; border-left:4px solid var(--warn);
+          padding:.6em 1em; border-radius:4px; margin:1em 0; }
+  .ok   { background:#e6f3ea; border-left:4px solid var(--ok);
+          padding:.6em 1em; border-radius:4px; margin:1em 0; }
+  ol li, ul li { margin:.3em 0; }
+  footer { margin-top:2em; padding:1em; border-top:1px solid var(--line);
+           color:var(--mute); font-size:.85em; text-align:center; }
+</style>
+</head>
+<body>
+
+<header>
+  <img src="busware_logo.png" alt="busware.de">
+  <div class="t">CDC2NET — Web Flasher
+    <small>USB-Host-CDC&nbsp;→&nbsp;raw-TCP bridge for CUL&nbsp;/&nbsp;TUL&nbsp;/&nbsp;EUL</small>
+  </div>
+</header>
+
+<main>
+
+<p>CDC2NET turns an <strong>ESP32-S3</strong> board into a network bridge for the
+   CUL / TUL / EUL stick line: plug a stick into the board's USB-host port, and
+   its serial stream becomes a plain TCP socket on your LAN — the
+   <code>ser2net</code> idea, on-chip. FHEM and friends talk to it the same way
+   they talk to a local <code>CUL</code>, just over <code>host:port</code>.</p>
+
+<div class="tiles">
+  <div class="tile usb"><div class="h">USB host</div>
+    <div class="d">Opens any CDC-ACM stick — legacy CUL (LUFA) and the
+       USB-Serial-JTAG of modern C3/C6 devices.</div></div>
+  <div class="tile net"><div class="h">WiFi onboarding</div>
+    <div class="d">Improv-Serial right after flashing, or a captive portal.
+       Static-IP / DHCP configurable later in the WebUI.</div></div>
+  <div class="tile pipe"><div class="h">Raw TCP pipe</div>
+    <div class="d">Transparent byte bridge on <code>:2329</code>, multiple
+       clients fan-out. No protocol framing, no RFC2217.</div></div>
+  <div class="tile fw"><div class="h">WebUI + OTA</div>
+    <div class="d"><code>http://cdc2net.local/</code> — status, config,
+       and over-the-air firmware updates without USB.</div></div>
+</div>
+
+<div class="panel flash">
+  <h2 style="margin-top:0">Install CDC2NET on your ESP32-S3</h2>
+  <p>Plug the ESP32-S3 board into USB, click below, and pick the serial port
+     that appears. The browser detects the chip and writes the matching image.</p>
+  <p>
+    <esp-web-install-button manifest="manifest.json"></esp-web-install-button>
+    <br><small style="color:var(--mute);display:block;margin-top:.5em">
+      Fresh install — erases all settings · version <code id="ver">…</code></small>
+  </p>
+</div>
+
+<div class="warn">
+  <strong>Browser requirement:</strong> Web&nbsp;Serial only works in
+  Chromium-based <em>desktop</em> browsers — <strong>Chrome, Edge, Opera,
+  Brave</strong> on macOS / Windows / Linux. Safari, Firefox and all mobile
+  browsers are not supported.
+</div>
+
+<div class="ok">
+  <strong>Bridge board:</strong> the firmware flashes the <strong>ESP32-S3</strong>
+  that does the bridging — <em>not</em> the CUL/TUL/EUL stick. You keep flashing
+  your sticks with their own firmware (culfw / a-culfw); CDC2NET just carries
+  their serial line over the network. Bring-up target is a 16&nbsp;MB S3 board
+  with a USB-host (OTG) port.
+</div>
+
+<h2>After flashing</h2>
+<ol>
+  <li><strong>Connect &amp; flash</strong> — esp-web-tools reads the chip family
+      from the bootloader and writes the factory image
+      (<a href="manifest.json"><code>manifest.json</code></a>) to <code>0x0</code>
+      in one shot. Old contents are erased.</li>
+  <li><strong>WiFi</strong> — the device boots into <strong>Improv-Serial</strong>
+      mode; esp-web-tools offers the WiFi hand-off right after flashing. (If you
+      miss it, the device opens a captive-portal AP.)</li>
+  <li><strong>Find it</strong> — it advertises <code>cdc2net.local</code> on mDNS
+      (plus a unique <code>cdc2net-XXXX.local</code>). Open
+      <code>http://cdc2net.local/</code> for status, config and OTA.</li>
+  <li><strong>Use it</strong> — plug a stick into the host port and point your
+      software at the raw-TCP port (default <code>2329</code>). In FHEM:
+      <pre><code>define CUL_0 CUL cdc2net.local:2329 1234</code></pre></li>
+</ol>
+
+<h2>Manual install (if Web&nbsp;Serial doesn't work)</h2>
+<p>Two artefacts you can download and flash with
+   <a href="https://github.com/espressif/esptool"><code>esptool.py</code></a>:</p>
+<ul>
+  <li><code id="dl-factory">factory_cdc2net_esp32s3.bin</code> — full image,
+      flash to <code>0x0</code></li>
+  <li><code>firmware.bin</code> — app only, for the in-device OTA</li>
+</ul>
+<pre><code>esptool.py --chip esp32s3 -p /dev/ttyACM0 write_flash 0x0 factory_cdc2net_esp32s3.bin</code></pre>
+
+<footer>
+  CDC2NET · firmware for the CUL / TUL / EUL line · GPL-2.0-or-later ·
+  &copy; 2026 Dirk Tostmann ·
+  <a href="https://github.com/tostmann/cdc2net" target="_blank" rel="noopener">github.com/tostmann/cdc2net</a><br>
+  hosted at <a href="https://busware.de">busware.de</a> ·
+  served from <a href="https://install.busware.de/cdc2net/">install.busware.de/cdc2net</a>
+</footer>
+
+</main>
+
+<script type="module"
+        src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+<script>
+  // Pull version + factory filename out of the manifest so the page never drifts.
+  fetch('manifest.json').then(r => r.json()).then(m => {
+    document.getElementById('ver').textContent = m.version || '?';
+    const part = ((m.builds || [])[0] || {}).parts || [];
+    if (part[0] && part[0].path) {
+      const el = document.getElementById('dl-factory');
+      el.outerHTML = '<a href="' + part[0].path + '" download>' + part[0].path + '</a>';
+    }
+  }).catch(() => {
+    document.getElementById('ver').textContent =
+      '(manifest.json not reachable — serve this directory over HTTPS)';
+  });
+</script>
+</body>
+</html>

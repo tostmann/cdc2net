@@ -1,0 +1,59 @@
+# Build / IDE
+.pio/
+.vscode/
+.cache/
+__pycache__/
+build/
+sdkconfig*
+!sdkconfig.defaults
+managed_components/
+dependencies.lock
+compile_commands.json
+
+# esptool.py symlink workaround (see RFNETHM): a bootloader build-step
+# looks for `python firmware/esptool.py`.  If we end up needing the symlink
+# it lives locally only.
+firmware/esptool.py
+
+# OS noise
+.DS_Store
+._*
+Thumbs.db
+
+# Editor swap
+*.swp
+*~
+
+# External source clones (belong to their upstream, not versioned here)
+research/
+
+# Pre-baked release binaries — live only on the public branch as explicit
+# release artifacts, not in local build snapshots.
+binaries/
+
+# Webflasher output (factory.bin + firmware.bin + manifest.json + MD5SUMS)
+# is built by release.sh and rsync'd out manually — not tracked.  A
+# webflasher/index.html landing page would be tracked, the rest not.
+webflasher/*.bin
+webflasher/manifest.json
+webflasher/MD5SUMS
+
+# NIEMALS in Git (projekt-übergreifende Regel, 2026-05-19 / 2026-05-20):
+# Agent-Guidance, interne Notizen, Secrets, Logs, fremde Datenblätter und
+# urheberrechtlich geschützte Schematics dürfen weder lokal noch auf einem
+# Remote landen.  .claude/ ist Claude-Code-Harness-State (session IDs +
+# PID + Lock-Timestamps) und gehört nie in Build-Snapshots.
+CLAUDE.md
+MEMORY.md
+GEMINI.md
+FACTS.md
+HARDWARE_STATUS.md
+.env
+.env.*
+*.key
+*.pem
+*.log
+schematics/
+datasheets/
+datasheet/
+.claude/

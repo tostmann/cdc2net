@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CDC2NET Bridge</title>
+<style>
+  :root{
+    --fg:#1f2630;--mut:#6b7280;--bg:#eef2f7;--card:#fff;--bd:#dde2ea;
+    --ok:#10b981;--warn:#f59e0b;--err:#ef4444;--acc:#0369a1;
+    --c-usb:#3b82f6; --c-net:#06b6d4; --c-pipe:#22c55e;
+    --c-fw:#eab308;  --c-log:#8b5cf6; --c-sys:#64748b;
+  }
+  *{box-sizing:border-box}
+  body{font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:0;color:var(--fg);
+       background:linear-gradient(180deg,#e8eef6 0%,#eef2f7 200px) no-repeat fixed;min-height:100vh}
+  header{background:linear-gradient(90deg,#0f172a 0%,#1e293b 100%);color:#fff;
+         padding:12px 22px;display:flex;justify-content:space-between;align-items:center;gap:16px;
+         box-shadow:0 1px 4px rgba(0,0,0,.15)}
+  header .brand{display:flex;align-items:center;gap:14px}
+  header .brand img{height:34px;display:block}
+  header h1{margin:0;font-size:18px;font-weight:500;letter-spacing:.2px}
+  header .stamp{font-family:ui-monospace,monospace;font-size:12px;color:#94a3b8}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px;padding:18px}
+  .card{background:var(--card);border:1px solid var(--bd);border-left:5px solid var(--accent,var(--bd));
+        border-radius:8px;padding:14px 16px 12px;box-shadow:0 1px 2px rgba(15,23,42,.05)}
+  .card h2{margin:0 0 10px;font-size:13px;font-weight:600;text-transform:uppercase;
+           letter-spacing:.6px;color:var(--accent,var(--acc));display:flex;align-items:center;gap:8px}
+  .card h2::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--accent,var(--acc))}
+  .cat-usb{--accent:var(--c-usb)} .cat-net{--accent:var(--c-net)} .cat-pipe{--accent:var(--c-pipe)}
+  .cat-fw{--accent:var(--c-fw)}   .cat-log{--accent:var(--c-log)} .cat-sys{--accent:var(--c-sys)}
+  table{width:100%;border-collapse:collapse}
+  table td{padding:3px 0;vertical-align:top}
+  table tr:not(:last-child){border-bottom:1px solid #f1f4f9}
+  table td:first-child{color:var(--mut);width:120px;font-size:12px}
+  table td:nth-child(2){font-family:ui-monospace,SF Mono,Menlo,monospace;font-size:13px;word-break:break-all}
+  .on{color:var(--ok);font-weight:600} .off{color:var(--err);font-weight:600} .ap{color:var(--warn);font-weight:600}
+  details{margin-top:10px;border-top:1px solid #eef1f5;padding-top:8px}
+  summary{cursor:pointer;color:var(--accent,var(--acc));font-weight:500;user-select:none;font-size:13px}
+  form{margin-top:8px} label{display:flex;align-items:center;gap:6px;margin:5px 0;font-size:13px}
+  label span{flex:0 0 105px;color:var(--mut)}
+  input[type=text],input[type=password],input[type=number]{flex:1;border:1px solid var(--bd);padding:5px 8px;
+     border-radius:5px;font-family:ui-monospace,monospace;font-size:13px;background:#fafbfd;min-width:0}
+  input:focus{outline:0;border-color:var(--accent,var(--acc))}
+  input[type=checkbox]{accent-color:var(--accent,var(--acc));transform:scale(1.1)}
+  .btnrow{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap}
+  button{cursor:pointer;background:var(--accent,var(--acc));color:#fff;border:0;padding:6px 14px;
+         border-radius:5px;font-size:13px;font-weight:500}
+  button:hover{filter:brightness(108%)} button.danger{background:var(--err)} button:disabled{opacity:.5}
+  .msg{margin-top:6px;font-size:12px;min-height:16px} .msg.ok{color:var(--ok)} .msg.err{color:var(--err)}
+  .aps{margin:6px 0;max-height:150px;overflow:auto;font-size:13px}
+  .aps div{padding:3px 6px;cursor:pointer;border-radius:4px;display:flex;justify-content:space-between;gap:10px}
+  .aps div:hover{background:#eef4fb}
+  #log{background:#0d1117;color:#c9d1d9;border-radius:6px;padding:10px;height:260px;overflow:auto;
+       font:12px/1.45 ui-monospace,Menlo,monospace;white-space:pre-wrap}
+  footer{padding:18px;color:var(--mut);font-size:12px;text-align:center}
+</style></head><body>
+<header>
+  <div class="brand">
+    <img alt="busware" src="data:image/png;base64,__LOGO__">
+    <h1>CDC2NET &mdash; USB-CDC Bridge</h1>
+  </div>
+  <span class="stamp" id="stamp">…</span>
+</header>
+
+<div class="grid">
+
+  <div class="card cat-usb"><h2>USB stick</h2><table id="t-usb"></table></div>
+
+  <div class="card cat-net"><h2>Network</h2>
+    <table id="t-net"></table>
+    <details><summary>WiFi setup</summary>
+      <div class="btnrow"><button id="b-scan" type="button">Scan</button></div>
+      <div class="aps" id="aps"></div>
+      <label><span>SSID</span><input type="text" id="w-ssid"></label>
+      <label><span>Password</span><input type="password" id="w-pass"></label>
+      <div class="btnrow"><button id="b-wifi" type="button">Save WiFi</button></div>
+      <div class="msg" id="m-wifi"></div>
+    </details>
+    <details><summary>Network config</summary>
+      <label><input type="checkbox" id="c-static"><span>Static IP</span></label>
+      <label><span>IP</span><input type="text" id="c-ip" placeholder="192.168.1.50"></label>
+      <label><span>Netmask</span><input type="text" id="c-mask" placeholder="255.255.255.0"></label>
+      <label><span>Gateway</span><input type="text" id="c-gw" placeholder="192.168.1.1"></label>
+      <label><span>DNS</span><input type="text" id="c-dns" placeholder="192.168.1.1"></label>
+      <label><span>TCP port</span><input type="number" id="c-port" min="1" max="65535"></label>
+      <label><input type="checkbox" id="c-wdt"><span>Reconnect WDT</span></label>
+      <label><span>WDT timeout s</span><input type="number" id="c-wdtto" min="30"></label>
+      <div class="btnrow"><button id="b-cfg" type="button">Save &amp; reboot</button></div>
+      <div class="msg" id="m-cfg"></div>
+    </details>
+    <details><summary>Maintenance</summary>
+      <div class="btnrow">
+        <button id="b-reboot" type="button" class="danger">Reboot</button>
+        <button id="b-forget" type="button" class="danger">Forget WiFi</button>
+      </div>
+      <div class="msg" id="m-maint"></div>
+    </details>
+  </div>
+
+  <div class="card cat-pipe"><h2>Pipe</h2><table id="t-pipe"></table></div>
+
+  <div class="card cat-fw"><h2>Firmware</h2>
+    <table id="t-fw"></table>
+    <details open><summary>Update</summary>
+      <div class="btnrow">
+        <button id="b-check" type="button">Check for update</button>
+        <button id="b-install" type="button">Install from server</button>
+      </div>
+      <div class="msg" id="m-upd"></div>
+    </details>
+    <details><summary>Manual flash (.bin)</summary>
+      <div class="btnrow"><input type="file" id="otafile" accept=".bin"><button id="b-ota" type="button">Flash</button></div>
+      <div class="msg" id="m-ota"></div>
+    </details>
+  </div>
+
+  <div class="card cat-sys"><h2>System</h2><table id="t-sys"></table></div>
+
+  <div class="card cat-log"><h2>Log</h2><div id="log"></div></div>
+
+</div>
+<footer>CDC2NET &mdash; transparent USB-CDC &rarr; raw-TCP bridge · polls /api/status every 2.5 s<br>
+&copy; 2026 Dirk Tostmann · <a href="https://github.com/tostmann/cdc2net" target="_blank" rel="noopener">github.com/tostmann/cdc2net</a></footer>
+
+<script>
+const $=id=>document.getElementById(id);
+const kb=b=>b<1024?b+" B":(b/1024).toFixed(1)+" KB";
+function dur(s){s=+s;const d=s/86400|0,h=s%86400/3600|0,m=s%3600/60|0,x=s%60;
+  const p=n=>String(n).padStart(2,"0");return (d?d+"d ":"")+p(h)+":"+p(m)+":"+p(x);}
+function row(k,v){return `<tr><td>${k}</td><td>${v}</td></tr>`;}
+function fill(id,rows){$(id).innerHTML=rows.join("");}
+function msg(id,t,c){const e=$(id);e.textContent=t;e.className="msg"+(c?(" "+c):"");}
+async function postJSON(u,o){return fetch(u,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(o)});}
+
+let cfgInit=false;
+async function refresh(){
+  let j;
+  try{ j=await (await fetch("/api/status",{cache:"no-store"})).json(); }
+  catch(e){ $("stamp").textContent="(unreachable)"; return; }
+  $("stamp").textContent=new Date().toLocaleTimeString();
+  const u=j.usb;
+  fill("t-usb",[
+    row("State", u.connected?'<span class="on">open</span>':'<span class="off">closed</span>'),
+    row("VID:PID", u.vid+":"+u.pid),
+    ...(u.product?[row("Product",u.product)]:[]),
+    ...(u.manuf?[row("Vendor",u.manuf)]:[]),
+    row("RX / TX", kb(u.rx)+" / "+kb(u.tx)),
+  ]);
+  const n=j.net;
+  fill("t-net",[
+    row("State", n.up?'<span class="on">connected</span>':(n.ap?'<span class="ap">AP mode</span>':'<span class="off">down</span>')),
+    row("IP", n.ip), row("Gateway", n.gw),
+    row("SSID", n.ssid), row("Hostname", n.host+".local"),
+  ]);
+  const t=j.tcp, b=j.br;
+  fill("t-pipe",[
+    row("TCP port", t.port), row("Clients", t.clients),
+    row("Accepts", t.accepts),
+    row("Bridge RX/TX", kb(b.rx_bytes)+" / "+kb(b.tx_bytes)),
+    row("TX dropped", b.tx_drop),
+  ]);
+  fill("t-fw",[ row("Version","v"+j.fw.version), row("Built", j.fw.built) ]);
+  const s=j.sys;
+  fill("t-sys",[
+    row("Uptime", dur(s.uptime_s)),
+    row("Heap free/min", kb(s.free_heap)+" / "+kb(s.min_free_heap)),
+    row("Largest block", kb(s.largest_block)),
+    row("Reset reason", s.reset_reason),
+  ]);
+  // Config form: populate once so the 2.5 s refresh doesn't fight typing.
+  if(!cfgInit && j.cfg){
+    const c=j.cfg;
+    $("c-static").checked=c.static_ip; $("c-ip").value=c.ip; $("c-mask").value=c.mask;
+    $("c-gw").value=c.gw; $("c-dns").value=c.dns; $("c-port").value=c.tcp_port;
+    $("c-wdt").checked=c.wdt_enable; $("c-wdtto").value=c.wdt_timeout_s;
+    if(!c.ip && n.ip!=="0.0.0.0"){ $("c-ip").placeholder=n.ip; $("c-gw").placeholder=n.gw; }
+    cfgInit=true;
+  }
+}
+
+let logSeq=0;
+async function pollLog(){
+  try{
+    const r=await (await fetch("/api/log?since="+logSeq,{cache:"no-store"})).json();
+    if(r.lines&&r.lines.length){
+      const el=$("log"), bottom=el.scrollTop+el.clientHeight>=el.scrollHeight-20;
+      for(const l of r.lines){ el.textContent+="["+l.ts+"] "+l.msg+"\n"; logSeq=l.seq+1; }
+      if(bottom) el.scrollTop=el.scrollHeight;
+    } else if(r.oldest!==undefined && logSeq<r.oldest){ logSeq=r.oldest; }
+  }catch(e){}
+}
+
+$("b-scan").onclick=async()=>{
+  $("aps").innerHTML="<div>scanning…</div>";
+  try{
+    const aps=await (await fetch("/api/wifi/scan")).json();
+    aps.sort((a,b)=>b.rssi-a.rssi);
+    $("aps").innerHTML=aps.map(a=>`<div data-s="${a.ssid}"><span>${a.ssid||"(hidden)"}</span><span>${a.rssi} dBm · ${a.auth}</span></div>`).join("")||"<div>none found</div>";
+    $("aps").querySelectorAll("div[data-s]").forEach(d=>d.onclick=()=>{$("w-ssid").value=d.dataset.s;$("w-pass").focus();});
+  }catch(e){ $("aps").innerHTML="<div>scan failed</div>"; }
+};
+
+$("b-wifi").onclick=async()=>{
+  const ssid=$("w-ssid").value.trim();
+  if(!ssid){ msg("m-wifi","SSID required","err"); return; }
+  msg("m-wifi","saving…");
+  try{
+    const r=await postJSON("/api/wifi",{ssid,pass:$("w-pass").value});
+    msg("m-wifi", r.ok?"saved — reboot to apply":("error: "+await r.text()), r.ok?"ok":"err");
+  }catch(e){ msg("m-wifi","error: "+e,"err"); }
+};
+
+$("b-cfg").onclick=async()=>{
+  const o={
+    tcp_port:+$("c-port").value||2329, static_ip:$("c-static").checked,
+    ip:$("c-ip").value.trim(), mask:$("c-mask").value.trim(),
+    gw:$("c-gw").value.trim(), dns:$("c-dns").value.trim(),
+    wdt_enable:$("c-wdt").checked, wdt_timeout_s:+$("c-wdtto").value||300,
+  };
+  if(o.static_ip && (!o.ip||!o.mask||!o.gw)){ msg("m-cfg","static IP needs ip/mask/gw","err"); return; }
+  msg("m-cfg","saving…");
+  try{
+    const r=await postJSON("/api/config",o);
+    if(r.ok){ msg("m-cfg","saved — rebooting…","ok"); setTimeout(()=>fetch("/api/reboot",{method:"POST"}),500); }
+    else msg("m-cfg","error: "+await r.text(),"err");
+  }catch(e){ msg("m-cfg","error: "+e,"err"); }
+};
+
+$("b-reboot").onclick=async()=>{ if(!confirm("Reboot the device?"))return;
+  msg("m-maint","rebooting…"); try{await fetch("/api/reboot",{method:"POST"});}catch(e){} };
+$("b-forget").onclick=async()=>{ if(!confirm("Forget WiFi credentials and reboot?"))return;
+  msg("m-maint","forgetting…"); try{await fetch("/api/wifi/reset",{method:"POST"});}catch(e){} };
+
+$("b-check").onclick=async()=>{
+  msg("m-upd","checking…");
+  try{
+    const u=await (await fetch("/api/update/check?refresh=1")).json();
+    msg("m-upd", u.state==="available"?("update "+u.available+" available (current "+u.current+")")
+      : u.state==="up_to_date"?("up to date (v"+u.current+")")
+      : u.state==="error"?("error: "+u.error):u.state, u.state==="available"?"ok":"");
+  }catch(e){ msg("m-upd","check failed","err"); }
+};
+$("b-install").onclick=async()=>{
+  if(!confirm("Pull firmware from the release server and flash it?"))return;
+  msg("m-upd","installing — device will reboot when done…");
+  try{ await fetch("/api/update/install",{method:"POST"}); }catch(e){}
+};
+
+$("b-ota").onclick=async()=>{
+  const f=$("otafile").files[0];
+  if(!f){ msg("m-ota","pick a .bin first","err"); return; }
+  msg("m-ota","uploading "+kb(f.size)+"…"); $("b-ota").disabled=true;
+  try{
+    const r=await fetch("/api/ota",{method:"POST",body:f});
+    msg("m-ota", r.ok?("OK — "+await r.text()+" — rebooting"):("failed: "+await r.text()), r.ok?"ok":"err");
+  }catch(e){ msg("m-ota","upload error (device may be rebooting)","err"); }
+  $("b-ota").disabled=false;
+};
+
+refresh(); pollLog();
+setInterval(refresh,2500); setInterval(pollLog,1500);
+</script>
+</body></html>
