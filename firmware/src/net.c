@@ -9,10 +9,12 @@
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "config.h"
+#include "health.h"
 #include "esp_timer.h"
 #include "esp_system.h"
 #include "lwip/inet.h"
 #include "lwip/sockets.h"
+#include <sys/time.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "freertos/task.h"
@@ -45,6 +47,7 @@ static char               s_host_buf[24];   // "cdc2net-XXXX"
 static char               s_ap_ssid[33];    // "CDC2NET XXXX"
 static bool               s_connected;
 static bool               s_ap_active;
+static int                s_ap_clients;          // # stations joined to the captive AP
 static int                s_retry_count;
 static const int          MAX_RETRY = 8;
 static bool               s_external_control;   // v0.10: Improv-managed?
@@ -55,10 +58,15 @@ static void net_wdt_task(void *arg);
 
 static void captive_dns_task(void *arg);
 static void deferred_ap_fallback_task(void *arg);
+static void deferred_ap_teardown_task(void *arg);
 static void sta_recovery_task(void *arg);
+static void net_stop_softap(void);
 static TaskHandle_t       s_dns_task;
 static TaskHandle_t       s_sta_recov_task;
+static volatile bool      s_dns_stop;            // signals captive_dns_task to exit
+static bool               s_ap_teardown_pending; // a GOT_IP already scheduled teardown
 static const uint32_t     STA_RECOVERY_PERIOD_MS = 60 * 1000;
+static const uint32_t     AP_TEARDOWN_GRACE_MS   = 10 * 1000;
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 
@@ -107,14 +115,25 @@ static void event_cb(void* arg, esp_event_base_t base, int32_t id, void *data)
         snprintf(s_gw_buf, sizeof(s_gw_buf), IPSTR, IP2STR(&ev->ip_info.gw));
         ESP_LOGI(TAG, "STA got IP %s gw %s", s_ip_buf, s_gw_buf);
         if (s_eg) xEventGroupSetBits(s_eg, BIT_GOT_IP);
+        // Wart-1 fix: if we are only in SoftAP because a transient outage
+        // exhausted the STA retries, tear the (open) captive AP back down once
+        // the STA is back — otherwise it would broadcast forever.  Deferred by
+        // a grace period so an in-progress captive-portal provisioning session
+        // can still receive its "connected" page before the AP drops.
+        if (s_ap_active && !s_ap_teardown_pending) {
+            s_ap_teardown_pending = true;
+            xTaskCreate(deferred_ap_teardown_task, "ap_teardown", 3072, NULL, 4, NULL);
+        }
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_SCAN_DONE) {
         if (s_eg) xEventGroupSetBits(s_eg, BIT_SCAN_DONE);
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STACONNECTED) {
         const wifi_event_ap_staconnected_t *ev = data;
-        ESP_LOGI(TAG, "AP client joined: " MACSTR, MAC2STR(ev->mac));
+        s_ap_clients++;
+        ESP_LOGI(TAG, "AP client joined: " MACSTR " (%d on AP)", MAC2STR(ev->mac), s_ap_clients);
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STADISCONNECTED) {
         const wifi_event_ap_stadisconnected_t *ev = data;
-        ESP_LOGI(TAG, "AP client left:   " MACSTR, MAC2STR(ev->mac));
+        if (s_ap_clients > 0) s_ap_clients--;
+        ESP_LOGI(TAG, "AP client left:   " MACSTR " (%d on AP)", MAC2STR(ev->mac), s_ap_clients);
     }
 }
 
@@ -216,6 +235,18 @@ esp_err_t net_init(void)
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wc));
         ESP_ERROR_CHECK(esp_wifi_start());
         ESP_LOGI(TAG, "STA starting, SSID='%s' (host='%s')", s_ssid_buf, s_host_buf);
+
+        // Wart-3 fix: run the periodic STA supervisor from BOOT (not only after
+        // a SoftAP fallback).  If the boot connect attempt's DISCONNECTED is
+        // swallowed by the Improv window (external_control) and nothing
+        // re-initiates it, the supervisor re-attempts — so a device with valid
+        // creds can never sit idle forever when its AP was briefly unreachable
+        // at boot.  (The net_set_external_control() hook makes the first retry
+        // immediate; this is the steady-state backstop.)
+        if (!s_sta_recov_task) {
+            xTaskCreate(sta_recovery_task, "sta_recov", 3072, NULL, 4,
+                        &s_sta_recov_task);
+        }
     } else {
         // Kein NVS-Cred: STA-Stack hochfahren (Improv kann ihn nutzen),
         // aber kein wifi_config setzen.  Parallel läuft ein Deferred-Task
@@ -236,25 +267,64 @@ esp_err_t net_init(void)
 }
 
 // Connectivity watchdog: reboot if the STA has had no IP for wdt_timeout_s.
-// Paused (timer reset) while connected, while in captive-AP mode (intentional
-// provisioning), and while no creds are stored — so it never reboot-loops a
-// device that is legitimately waiting to be provisioned.
+// Paused (timer reset) while connected, while a station is actively joined to
+// the captive AP (someone is provisioning — don't yank it out from under them),
+// and while no creds are stored (a fresh device legitimately waiting to be
+// provisioned must never reboot-loop).
+//
+// Wart-2 fix: the pause condition used to be `s_ap_active`, but the SoftAP
+// fallback raises s_ap_active after only ~8 failed retries (~tens of seconds),
+// which is well inside the default 300 s timeout — so the WDT was permanently
+// shadowed and could never fire on a deployed device.  Gating on s_ap_clients>0
+// instead means an *unattended* device sitting in AP fallback (nobody joined)
+// still counts down and eventually reboots, which is the whole point of the
+// opt-in WDT, while an in-progress provisioning session still pauses it.
+// (During a sustained outage with the WDT on this reboots roughly every
+// timeout; sta_recovery_task reconnects without a reboot the moment the AP
+// returns, so the loop self-terminates as soon as connectivity is back.)
 static void net_wdt_task(void *arg)
 {
     (void)arg;
     const int64_t to_us = (int64_t)s_cfg.wdt_timeout_s * 1000000;
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(10000));
-        if (s_connected || s_ap_active || s_ssid_buf[0] == '\0') {
+        if (s_connected || s_ap_clients > 0 || s_ssid_buf[0] == '\0') {
             s_last_conn_us = esp_timer_get_time();
             continue;
         }
         if ((esp_timer_get_time() - s_last_conn_us) > to_us) {
             ESP_LOGE(TAG, "connectivity watchdog: offline > %us — rebooting",
                      (unsigned)s_cfg.wdt_timeout_s);
+            health_note_connectivity_reboot();   // attribute this reboot
             esp_restart();
         }
     }
+}
+
+// Deferred SoftAP teardown — see the GOT_IP handler.  Waits a grace period so
+// any captive-portal client gets its success page, then (if we are still
+// connected and the AP is still up) drops the AP and returns to pure STA.
+static void deferred_ap_teardown_task(void *arg)
+{
+    (void)arg;
+    vTaskDelay(pdMS_TO_TICKS(AP_TEARDOWN_GRACE_MS));
+    if (s_connected && s_ap_active) {
+        net_stop_softap();
+    }
+    s_ap_teardown_pending = false;
+    vTaskDelete(NULL);
+}
+
+// Drop the captive SoftAP and return to STA-only.  Signals the captive DNS
+// responder to exit (SO_RCVTIMEO lets it notice the flag within ~1 s).
+static void net_stop_softap(void)
+{
+    if (!s_ap_active) return;
+    ESP_LOGW(TAG, "tearing down captive AP — STA reconnected, AP no longer needed");
+    s_dns_stop = true;                  // captive_dns_task will close + exit
+    esp_wifi_set_mode(WIFI_MODE_STA);   // drop the AP iface, keep the STA assoc
+    s_ap_active  = false;
+    s_ap_clients = 0;
 }
 
 static void deferred_ap_fallback_task(void *arg)
@@ -328,6 +398,17 @@ void net_set_external_control(bool on)
 {
     s_external_control = on;
     ESP_LOGI(TAG, "external control %s", on ? "ON (Improv)" : "OFF");
+    // Wart-3 fix (root cause): when Improv hands control back and we are NOT
+    // connected, the boot connect attempt's DISCONNECTED was swallowed while
+    // external_control was ON and nothing re-initiated it.  Kick the connect
+    // now so we don't sit idle until the supervisor's next tick.  Skip if
+    // already in AP fallback (sta_recovery owns that) or there are no creds.
+    if (!on && !s_connected && !s_ap_active && s_ssid_buf[0] != '\0') {
+        s_retry_count = 0;
+        ESP_LOGW(TAG, "improv released control while disconnected — kicking STA connect to '%s'",
+                 s_ssid_buf);
+        esp_wifi_connect();
+    }
 }
 
 bool net_has_creds(void)
@@ -374,6 +455,7 @@ esp_err_t net_start_softap(void)
 
     s_ap_active = true;
 
+    s_dns_stop = false;
     if (!s_dns_task) {
         xTaskCreate(captive_dns_task, "cap_dns", 3072, NULL, 4, &s_dns_task);
     }
@@ -393,15 +475,28 @@ esp_err_t net_start_softap(void)
 // erneuter Disconnect-Salve landen wir wieder hier nach STA_RECOVERY_PERIOD_MS).
 static void sta_recovery_task(void *arg)
 {
-    ESP_LOGI(TAG, "sta_recovery: armed (period=%us)",
+    ESP_LOGI(TAG, "sta_supervisor: armed (period=%us)",
              (unsigned)(STA_RECOVERY_PERIOD_MS / 1000));
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(STA_RECOVERY_PERIOD_MS));
-        if (s_external_control) continue;
-        if (s_connected)        continue;
-        if (s_ssid_buf[0] == '\0') continue;
-        s_retry_count = 0;   // Budget für die nächste retry-Salve aus dem Event-Handler
-        ESP_LOGW(TAG, "sta_recovery: trying esp_wifi_connect() to '%s'", s_ssid_buf);
+        if (s_external_control) continue;     // Improv owns the radio
+        if (s_connected)        continue;     // already up — nothing to do
+        if (s_ssid_buf[0] == '\0') continue;  // no creds — nothing to retry
+        if (s_ap_active) {
+            // In captive fallback: actively retry the stored creds so a
+            // returning AP reconnects (→ teardown).  Reset the budget for a
+            // fresh DISCONNECTED-driven salve (idempotent net_start_softap
+            // means a failed salve just stays in fallback).
+            s_retry_count = 0;
+            ESP_LOGW(TAG, "sta_supervisor: fallback reconnect to '%s'", s_ssid_buf);
+        } else {
+            // Idle, NOT in fallback (the boot-gap / a DISCONNECTED swallowed
+            // during the Improv window): nudge the connect machinery, but do
+            // NOT touch s_retry_count — a failed nudge falls through the normal
+            // DISCONNECTED→retry→fallback path; clobbering the counter here
+            // would keep restarting an in-flight salve and prevent fallback.
+            ESP_LOGW(TAG, "sta_supervisor: idle with creds — nudging connect to '%s'", s_ssid_buf);
+        }
         esp_wifi_connect();
     }
 }
@@ -487,14 +582,18 @@ static void captive_dns_task(void *arg)
         vTaskDelete(NULL);
         return;
     }
+    // 1 s recv timeout so the loop can notice s_dns_stop (set on AP teardown)
+    // instead of blocking in recvfrom forever.
+    struct timeval rcvto = { .tv_sec = 1, .tv_usec = 0 };
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &rcvto, sizeof(rcvto));
     ESP_LOGI(TAG, "captive_dns: listening on UDP/53");
 
     uint8_t buf[256];
-    while (1) {
+    while (!s_dns_stop) {
         struct sockaddr_in src;
         socklen_t slen = sizeof(src);
         int n = recvfrom(sock, buf, sizeof(buf), 0, (struct sockaddr *)&src, &slen);
-        if (n < 12) continue;   // DNS-Header is 12 B
+        if (n < 12) continue;   // DNS-Header is 12 B (or recv timeout → n<0)
 
         // Set QR=1 (response), AA=1, RA=1.
         buf[2] = 0x84;
@@ -534,4 +633,11 @@ qclass:
 
         sendto(sock, buf, p, 0, (struct sockaddr *)&src, slen);
     }
+
+    // s_dns_stop was set (AP torn down) — release the socket and the task.
+    close(sock);
+    s_dns_task = NULL;
+    s_dns_stop = false;
+    ESP_LOGI(TAG, "captive_dns: stopped (AP down)");
+    vTaskDelete(NULL);
 }

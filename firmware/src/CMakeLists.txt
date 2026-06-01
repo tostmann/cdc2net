@@ -7,7 +7,7 @@
 idf_component_register(
     SRCS         "main.c" "bridge.c" "source_usb.c" "sink_tcp.c"
                  "net.c" "improv_glue.cpp" "mdns_glue.c" "config.c"
-                 "log_buffer.c" "ota_check.c" "webui.c"
+                 "log_buffer.c" "ota_check.c" "webui.c" "health.c"
     INCLUDE_DIRS "."
     REQUIRES     usb usb_host_cdc_acm
                  esp_wifi esp_event esp_netif nvs_flash lwip

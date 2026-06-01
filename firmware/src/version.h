@@ -6,9 +6,9 @@
 
 #define FW_VERSION_MAJOR  0
 #define FW_VERSION_MINOR  1
-#define FW_VERSION_BUILD  22
+#define FW_VERSION_BUILD  31
 
-#define FW_VERSION_STRING "0.1.22"
-#define FW_BUILD_DATE     "2026-06-01 20:08:52"
+#define FW_VERSION_STRING "0.1.31"
+#define FW_BUILD_DATE     "2026-06-01 22:26:54"
 
 #endif // VERSION_H

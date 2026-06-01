@@ -160,12 +160,16 @@ async function refresh(){
     row("TX dropped", b.tx_drop),
   ]);
   fill("t-fw",[ row("Version","v"+j.fw.version), row("Built", j.fw.built) ]);
-  const s=j.sys;
+  const s=j.sys, h=j.health||{};
   fill("t-sys",[
     row("Uptime", dur(s.uptime_s)),
     row("Heap free/min", kb(s.free_heap)+" / "+kb(s.min_free_heap)),
     row("Largest block", kb(s.largest_block)),
     row("Reset reason", s.reset_reason),
+    row("Boots", h.boot_count),
+    row("Crashes", h.crash_count>0?'<span class="off">'+h.crash_count+'</span>':h.crash_count),
+    row("Conn-WDT reboots", h.wdt_reboots),
+    row("Task-WDT", h.wdt_subscribed?'<span class="on">armed</span>':'<span class="off">off</span>'),
   ]);
   // Config form: populate once so the 2.5 s refresh doesn't fight typing.
   if(!cfgInit && j.cfg){

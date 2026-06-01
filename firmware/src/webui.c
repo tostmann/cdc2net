@@ -13,6 +13,7 @@
 #include "log_buffer.h"
 #include "ota_check.h"
 #include "config.h"
+#include "health.h"
 #include <stdlib.h>
 
 #include "esp_http_server.h"
@@ -165,7 +166,7 @@ static esp_err_t h_status(httpd_req_t *req)
     cdc2net_cfg_t cfg;
     config_load(&cfg);
 
-    char buf[1700];
+    char buf[1850];
     int n = snprintf(buf, sizeof(buf),
         "{"
           "\"fw\":{\"version\":\"%s\",\"built\":\"%s\"},"
@@ -178,7 +179,9 @@ static esp_err_t h_status(httpd_req_t *req)
           "\"cfg\":{\"tcp_port\":%u,\"static_ip\":%s,\"ip\":\"%s\",\"mask\":\"%s\","
                   "\"gw\":\"%s\",\"dns\":\"%s\",\"wdt_enable\":%s,\"wdt_timeout_s\":%u},"
           "\"sys\":{\"uptime_s\":%u,\"free_heap\":%u,\"min_free_heap\":%u,"
-                   "\"largest_block\":%u,\"reset_reason\":\"%s\"}"
+                   "\"largest_block\":%u,\"reset_reason\":\"%s\"},"
+          "\"health\":{\"boot_count\":%u,\"crash_count\":%u,\"wdt_reboots\":%u,"
+                      "\"wdt_subscribed\":%s}"
         "}",
         FW_VERSION_STRING, FW_BUILD_DATE,
         net_is_connected() ? "true" : "false", ssid_esc, net_ip_str(), net_gw_str(),
@@ -197,7 +200,10 @@ static esp_err_t h_status(httpd_req_t *req)
         (unsigned)esp_get_free_heap_size(),
         (unsigned)esp_get_minimum_free_heap_size(),
         (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
-        reset_reason_str(esp_reset_reason()));
+        reset_reason_str(esp_reset_reason()),
+        (unsigned)health_boot_count(), (unsigned)health_crash_count(),
+        (unsigned)health_wdt_reboots(),
+        health_wdt_subscribed() ? "true" : "false");
 
     if (n < 0 || n >= (int)sizeof(buf)) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "buf overflow");

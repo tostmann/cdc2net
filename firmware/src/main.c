@@ -17,6 +17,7 @@
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_heap_caps.h"
+#include "esp_task_wdt.h"
 
 #include "version.h"
 #include "bridge.h"
@@ -28,6 +29,7 @@
 #include "log_buffer.h"
 #include "webui.h"
 #include "config.h"
+#include "health.h"
 
 static const char *TAG = "cdc2net";
 
@@ -56,6 +58,8 @@ void app_main(void)
 
     ESP_LOGW(TAG, ">>> bringing up WiFi (PHY init) — USB must survive <<<");
     net_init();
+    health_boot_init();  // NVS is up now (net_init did nvs_flash_init) — bump
+                         // boot/crash counters, attribute the last reset
     improv_init();
     mdns_glue_init();    // publishes cdc2net-XXXX.local once WiFi has an IP
 
@@ -70,8 +74,24 @@ void app_main(void)
     // WebUI status/OTA server on :80 (also serves the captive portal).
     webui_init(0);
 
+    // Subscribe this (main) task to the Task-WDT so a wedged firmware path is
+    // caught and panic-rebooted (CONFIG_ESP_TASK_WDT_TIMEOUT_S=5, PANIC=y).
+    // The STATUS cadence stays 10 s, but we feed the WDT every 1 s inside the
+    // sleep so a healthy loop never trips the 5 s timeout.  (RFNETHM subscribes
+    // its source supervisor; the family pattern is to put a real app task on
+    // the WDT rather than rely on idle-task monitoring alone.)
+    esp_err_t wr = esp_task_wdt_add(NULL);
+    if (wr != ESP_OK && wr != ESP_ERR_INVALID_ARG) {
+        ESP_LOGW(TAG, "esp_task_wdt_add failed (%s) — main loop not WDT-guarded",
+                 esp_err_to_name(wr));
+    }
+    health_set_wdt_subscribed(wr == ESP_OK || wr == ESP_ERR_INVALID_ARG);
+
     while (1) {
-        vTaskDelay(pdMS_TO_TICKS(10000));
+        for (int i = 0; i < 10; i++) {       // 10 x 1 s = 10 s STATUS cadence
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            esp_task_wdt_reset();            // feed well under the 5 s timeout
+        }
         source_usb_stats_t us;  source_usb_get_stats(&us);
         bridge_stats_t     bs;  bridge_get_stats(&bs);
         sink_tcp_stats_t   ts;  sink_tcp_get_stats(&ts);
