@@ -32,11 +32,14 @@ research/
 binaries/
 
 # Webflasher output (factory.bin + firmware.bin + manifest.json + MD5SUMS)
-# is built by release.sh and rsync'd out manually — not tracked.  A
-# webflasher/index.html landing page would be tracked, the rest not.
+# is built by release.sh and pushed out by deploy.sh — not tracked.  The
+# webflasher/index.html landing page (+ busware_logo.png) is tracked, the rest not.
 webflasher/*.bin
 webflasher/manifest.json
 webflasher/MD5SUMS
+
+# Local deploy target for deploy.sh (DEPLOY_DEST=internal-host:path) — never track.
+firmware/scripts/deploy.conf
 
 # NIEMALS in Git (projekt-übergreifende Regel, 2026-05-19 / 2026-05-20):
 # Agent-Guidance, interne Notizen, Secrets, Logs, fremde Datenblätter und

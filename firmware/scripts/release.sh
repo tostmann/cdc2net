@@ -186,8 +186,8 @@ echo "=== Release artefacts (version $VERSION) ==="
 ls -lh "$OUT/$FACTORY_NAME" "$OUT/$FIRMWARE_NAME" "$OUT/manifest.json" "$OUT/MD5SUMS"
 echo
 echo "Public landing page:  https://install.busware.de/cdc2net/"
-echo "Deploy (manual, run by you) — set DEPLOY_DEST to your release host:"
-echo "  rsync -av webflasher/ \"\${DEPLOY_DEST:-<release-host>:/var/www/install/cdc2net/}\""
+echo "Deploy to the release server (final release step):"
+echo "  bash firmware/scripts/deploy.sh    # DEPLOY_DEST via env/arg or firmware/scripts/deploy.conf"
 echo
 if [ -n "$RELEASE_TAG" ]; then
 echo "Nach erfolgreichem Webflasher-Deploy:"
