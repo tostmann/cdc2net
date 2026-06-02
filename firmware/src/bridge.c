@@ -283,3 +283,37 @@ void bridge_get_stats(bridge_stats_t *out)
     *out = s_br.stats;
     xSemaphoreGive(s_br.mtx);
 }
+
+// ───── Line-coding passthrough (RFC2217 Layer B) ────────────────────────
+// Snapshot the source under s_br.mtx, RELEASE it, then call the source op.
+// The source op takes its own tx-lock (EP0 control transfer) — holding
+// s_br.mtx across it would invert the lock order with op_tx's tx_mtx.  The
+// sink calls these without holding its own mutex (the IAC parse runs in the
+// client task outside the fanout lock).
+
+esp_err_t bridge_apply_line_coding(uint32_t baud, uint8_t bits,
+                                   uint8_t parity, uint8_t stop)
+{
+    xSemaphoreTake(s_br.mtx, portMAX_DELAY);
+    source_t *src = s_br.source;
+    xSemaphoreGive(s_br.mtx);
+    if (!src) return ESP_ERR_INVALID_STATE;
+    return source_set_line_coding(src, baud, bits, parity, stop);
+}
+
+void bridge_revert_line_coding(void)
+{
+    xSemaphoreTake(s_br.mtx, portMAX_DELAY);
+    source_t *src = s_br.source;
+    xSemaphoreGive(s_br.mtx);
+    source_revert_line_coding(src);
+}
+
+void bridge_get_line_coding(uint32_t *baud, uint8_t *bits,
+                            uint8_t *parity, uint8_t *stop)
+{
+    xSemaphoreTake(s_br.mtx, portMAX_DELAY);
+    source_t *src = s_br.source;
+    xSemaphoreGive(s_br.mtx);
+    source_get_line_coding(src, baud, bits, parity, stop);
+}

@@ -64,7 +64,23 @@
 
 <div class="grid">
 
-  <div class="card cat-usb"><h2>USB stick</h2><table id="t-usb"></table></div>
+  <div class="card cat-usb"><h2>USB stick</h2><table id="t-usb"></table>
+    <details><summary>Serial config (baud)</summary>
+      <label><span>Device key</span><input type="text" id="s-key" readonly></label>
+      <label><span>Baud</span>
+        <select id="s-baud">
+          <option>1200</option><option>2400</option><option>4800</option><option>9600</option>
+          <option>19200</option><option>38400</option><option>57600</option>
+          <option selected>115200</option><option>230400</option><option>460800</option><option>921600</option>
+        </select></label>
+      <label><span>Data bits</span><select id="s-bits"><option>5</option><option>6</option><option>7</option><option selected>8</option></select></label>
+      <label><span>Parity</span><select id="s-parity"><option value="0" selected>none</option><option value="1">odd</option><option value="2">even</option><option value="3">mark</option><option value="4">space</option></select></label>
+      <label><span>Stop bits</span><select id="s-stop"><option value="0" selected>1</option><option value="1">1.5</option><option value="2">2</option></select></label>
+      <div class="msg" id="s-note"></div>
+      <div class="btnrow"><button id="b-serial" type="button">Save baud</button></div>
+      <div class="msg" id="m-serial"></div>
+    </details>
+  </div>
 
   <div class="card cat-net"><h2>Network</h2>
     <table id="t-net"></table>
@@ -132,7 +148,7 @@ function fill(id,rows){$(id).innerHTML=rows.join("");}
 function msg(id,t,c){const e=$(id);e.textContent=t;e.className="msg"+(c?(" "+c):"");}
 async function postJSON(u,o){return fetch(u,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(o)});}
 
-let cfgInit=false;
+let cfgInit=false, sLastKey=null;
 async function refresh(){
   let j;
   try{ j=await (await fetch("/api/status",{cache:"no-store"})).json(); }
@@ -180,6 +196,22 @@ async function refresh(){
     if(!c.ip && n.ip!=="0.0.0.0"){ $("c-ip").placeholder=n.ip; $("c-gw").placeholder=n.gw; }
     cfgInit=true;
   }
+  // Serial config: repopulate the form only when the attached device changes,
+  // so the 2.5 s poll doesn't fight an edit in progress.
+  try{
+    const sj=await (await fetch("/api/serial",{cache:"no-store"})).json();
+    const a=sj.attached, e=sj.effective;
+    $("s-key").value=a.key||"";
+    if(a.key!==sLastKey){
+      sLastKey=a.key;
+      $("s-baud").value=e.baud; $("s-bits").value=e.bits;
+      $("s-parity").value=e.parity; $("s-stop").value=e.stop;
+    }
+    $("s-note").textContent = !a.connected ? "no device attached"
+      : (a.is_vcp ? ("effective "+e.baud+" "+e.bits+"·"+["N","O","E","M","S"][e.parity]+"·"+(e.stop?"2":"1")+" ("+e.source+")")
+                  : "native CDC — baud advisory only (culfw ignores it)");
+    $("b-serial").disabled = !a.connected;
+  }catch(err){}
 }
 
 let logSeq=0;
@@ -228,6 +260,19 @@ $("b-cfg").onclick=async()=>{
     if(r.ok){ msg("m-cfg","saved — rebooting…","ok"); setTimeout(()=>fetch("/api/reboot",{method:"POST"}),500); }
     else msg("m-cfg","error: "+await r.text(),"err");
   }catch(e){ msg("m-cfg","error: "+e,"err"); }
+};
+
+$("b-serial").onclick=async()=>{
+  const key=$("s-key").value.trim();
+  if(!key){ msg("m-serial","no device attached","err"); return; }
+  msg("m-serial","saving…");
+  try{
+    const r=await postJSON("/api/serial",{key,baud:+$("s-baud").value,
+      bits:+$("s-bits").value,parity:+$("s-parity").value,stop:+$("s-stop").value});
+    const j=await r.json().catch(()=>({}));
+    msg("m-serial", r.ok?("saved"+(j.applied?" + applied live":" (applies on next open)")):("error: "+await r.text()), r.ok?"ok":"err");
+    sLastKey=null;
+  }catch(e){ msg("m-serial","error: "+e,"err"); }
 };
 
 $("b-reboot").onclick=async()=>{ if(!confirm("Reboot the device?"))return;

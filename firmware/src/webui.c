@@ -464,6 +464,122 @@ static esp_err_t h_config_post(httpd_req_t *req)
                            HTTPD_RESP_USE_STRLEN);
 }
 
+// ───── /api/serial — per-device line coding (baud/bits/parity/stop) ──────
+
+static const char *lcsrc_str(uint8_t s) {
+    return s == 1 ? "nvs" : (s == 2 ? "rfc2217" : "default");
+}
+
+static esp_err_t h_serial_get(httpd_req_t *req)
+{
+    source_usb_serial_info_t si;
+    source_usb_get_serial_info(&si);
+    serialcfg_item_t items[SERIALCFG_MAX];
+    int nitems = serialcfg_list(items, SERIALCFG_MAX);
+
+    char key_esc[80], ser_esc[80];
+    json_escape(si.key,    key_esc, sizeof(key_esc));
+    json_escape(si.serial, ser_esc, sizeof(ser_esc));
+
+    char buf[1024];
+    int n = snprintf(buf, sizeof(buf),
+        "{\"attached\":{\"connected\":%s,\"is_vcp\":%s,\"vid\":\"%04X\",\"pid\":\"%04X\","
+          "\"serial\":\"%s\",\"key\":\"%s\"},"
+        "\"effective\":{\"baud\":%u,\"bits\":%u,\"parity\":%u,\"stop\":%u,\"source\":\"%s\"},"
+        "\"stored\":[",
+        si.connected ? "true" : "false", si.is_vcp ? "true" : "false", si.vid, si.pid,
+        ser_esc, key_esc,
+        (unsigned)si.baud, si.bits, si.parity, si.stop, lcsrc_str(si.lc_source));
+    for (int i = 0; i < nitems && n > 0 && n < (int)sizeof(buf) - 96; i++) {
+        char k_esc[80];
+        json_escape(items[i].key, k_esc, sizeof(k_esc));
+        n += snprintf(buf + n, sizeof(buf) - n,
+            "%s{\"key\":\"%s\",\"baud\":%u,\"bits\":%u,\"parity\":%u,\"stop\":%u}",
+            i ? "," : "", k_esc, (unsigned)items[i].lc.baud,
+            items[i].lc.bits, items[i].lc.parity, items[i].lc.stop);
+    }
+    if (n > 0 && n < (int)sizeof(buf) - 3)
+        n += snprintf(buf + n, sizeof(buf) - n, "]}");
+    if (n <= 0 || n >= (int)sizeof(buf)) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "buf overflow");
+        return ESP_FAIL;
+    }
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return httpd_resp_send(req, buf, n);
+}
+
+// POST {key,baud,bits,parity,stop}  — store the per-device default (applied
+// live if that device is attached and no RFC2217 client owns the port).
+// POST {key,delete:true}            — forget the entry.
+static esp_err_t h_serial_post(httpd_req_t *req)
+{
+    char body[256];
+    read_body(req, body, sizeof(body));
+
+    char key[SERIALCFG_KEY_LEN];
+    if (json_field(body, "key", key, sizeof(key)) != 0 || key[0] == '\0') {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "key required");
+        return ESP_FAIL;
+    }
+    if (json_field_truthy(body, "delete")) {
+        serialcfg_delete(key);
+        // If we just deleted the entry for the *attached* device (and no RFC2217
+        // client owns the port), re-apply the global default live — otherwise
+        // the effective line coding lingers at the now-orphaned NVS value still
+        // labelled "nvs" instead of falling back to "default".  Mirrors the
+        // upsert apply-live guard below; runs in the httpd task (no sink mutex
+        // held), so apply_line_coding's tx_mtx never nests.
+        bool reverted = false;
+        source_usb_serial_info_t si;
+        source_usb_get_serial_info(&si);
+        if (si.connected && si.lc_source != 2 && strcmp(si.key, key) == 0) {
+            serialcfg_lc_t d = serialcfg_default();
+            reverted = (source_usb_apply_line_coding(d.baud, d.bits, d.parity,
+                                                     d.stop, 0) == ESP_OK);
+        }
+        char resp[48];
+        int n = snprintf(resp, sizeof(resp), "{\"deleted\":true,\"reverted\":%s}",
+                         reverted ? "true" : "false");
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_send(req, resp, n);
+    }
+
+    char v[16];
+    serialcfg_lc_t lc = serialcfg_default();
+    if (json_field(body, "baud", v, sizeof(v)) == 0) {
+        long b = atol(v); if (b >= 300 && b <= 4000000) lc.baud = (uint32_t)b;
+    }
+    if (json_field(body, "bits", v, sizeof(v)) == 0) {
+        int b = atoi(v); if (b >= 5 && b <= 8) lc.bits = (uint8_t)b;
+    }
+    if (json_field(body, "parity", v, sizeof(v)) == 0) {
+        int p = atoi(v); if (p >= 0 && p <= 4) lc.parity = (uint8_t)p;
+    }
+    if (json_field(body, "stop", v, sizeof(v)) == 0) {
+        int s = atoi(v); if (s >= 0 && s <= 2) lc.stop = (uint8_t)s;
+    }
+
+    if (serialcfg_upsert(key, &lc) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "save failed");
+        return ESP_FAIL;
+    }
+
+    // Apply now if this is the attached device and no RFC2217 client controls it.
+    bool applied = false;
+    source_usb_serial_info_t si;
+    source_usb_get_serial_info(&si);
+    if (si.connected && si.lc_source != 2 && strcmp(si.key, key) == 0)
+        applied = (source_usb_apply_line_coding(lc.baud, lc.bits, lc.parity,
+                                                lc.stop, 1) == ESP_OK);
+
+    char resp[64];
+    int n = snprintf(resp, sizeof(resp), "{\"saved\":true,\"applied\":%s}",
+                     applied ? "true" : "false");
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, resp, n);
+}
+
 // ───── /api/wifi — set creds / scan / forget ────────────────────────────
 
 static esp_err_t h_wifi(httpd_req_t *req)
@@ -570,6 +686,8 @@ esp_err_t webui_init(uint16_t port)
     u = (httpd_uri_t){ .uri="/api/update/install",.method=HTTP_POST,.handler=h_update_install }; httpd_register_uri_handler(s_http, &u);
     u = (httpd_uri_t){ .uri="/api/config",        .method=HTTP_GET, .handler=h_config_get };  httpd_register_uri_handler(s_http, &u);
     u = (httpd_uri_t){ .uri="/api/config",        .method=HTTP_POST,.handler=h_config_post }; httpd_register_uri_handler(s_http, &u);
+    u = (httpd_uri_t){ .uri="/api/serial",        .method=HTTP_GET, .handler=h_serial_get };  httpd_register_uri_handler(s_http, &u);
+    u = (httpd_uri_t){ .uri="/api/serial",        .method=HTTP_POST,.handler=h_serial_post }; httpd_register_uri_handler(s_http, &u);
     u = (httpd_uri_t){ .uri="/api/wifi",          .method=HTTP_POST,.handler=h_wifi };        httpd_register_uri_handler(s_http, &u);
     u = (httpd_uri_t){ .uri="/api/wifi/scan",     .method=HTTP_GET, .handler=h_wifi_scan };   httpd_register_uri_handler(s_http, &u);
     u = (httpd_uri_t){ .uri="/api/wifi/reset",    .method=HTTP_POST,.handler=h_wifi_reset };  httpd_register_uri_handler(s_http, &u);

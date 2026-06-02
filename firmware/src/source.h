@@ -62,6 +62,27 @@ struct source_ops {
     // Identifier-String für Status-Anzeige (z.B. "USB:1B1F:C020 App
     // 'DualCoPro_App'").  Zeigt aktuellen Modus + Tag wenn bekannt.
     const char* (*describe)(source_t *src);
+
+    // ── Line-coding (RFC2217 Layer B + per-device NVS default) ───────────
+    // Optional (NULL = source has no settable line coding).  All values are
+    // CDC form: bits 5..8, parity 0N/1O/2E/3M/4S, stop 0=1/1=1.5/2=2.
+    //
+    // LOCK-ORDER (load-bearing): the implementation takes ONLY its own
+    // tx-lock (the same one that serialises op_tx) — it issues an EP0
+    // control transfer.  Callers (the bridge passthroughs) MUST snapshot the
+    // source pointer under their own mutex, RELEASE it, and only THEN call
+    // these — never with a sink mutex held.  See bridge_apply_line_coding().
+    //
+    //   set_line_coding   — apply baud/bits/parity/stop to the wire (RFC2217)
+    //   revert_line_coding— re-apply the device's NVS/global default coding
+    //                       (called when the RFC2217 controller releases)
+    //   get_line_coding   — read back the last-applied coding (display shadow;
+    //                       FTDI/CH34x have no GET, so this is a shadow)
+    esp_err_t (*set_line_coding)(source_t *src, uint32_t baud, uint8_t bits,
+                                 uint8_t parity, uint8_t stop);
+    void      (*revert_line_coding)(source_t *src);
+    void      (*get_line_coding)(source_t *src, uint32_t *baud, uint8_t *bits,
+                                 uint8_t *parity, uint8_t *stop);
 };
 
 struct source {
@@ -84,6 +105,20 @@ static inline esp_err_t source_reset(source_t *src) {
 }
 static inline const char *source_describe(source_t *src) {
     return src && src->ops && src->ops->describe ? src->ops->describe(src) : "no-source";
+}
+static inline esp_err_t source_set_line_coding(source_t *src, uint32_t baud,
+        uint8_t bits, uint8_t parity, uint8_t stop) {
+    return src && src->ops && src->ops->set_line_coding
+        ? src->ops->set_line_coding(src, baud, bits, parity, stop)
+        : ESP_ERR_NOT_SUPPORTED;
+}
+static inline void source_revert_line_coding(source_t *src) {
+    if (src && src->ops && src->ops->revert_line_coding) src->ops->revert_line_coding(src);
+}
+static inline void source_get_line_coding(source_t *src, uint32_t *baud,
+        uint8_t *bits, uint8_t *parity, uint8_t *stop) {
+    if (src && src->ops && src->ops->get_line_coding)
+        src->ops->get_line_coding(src, baud, bits, parity, stop);
 }
 
 // ───── sink-Interface (TCP / UDP / WebUI / …) ───────────────────────────

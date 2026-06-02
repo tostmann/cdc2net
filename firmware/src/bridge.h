@@ -121,6 +121,24 @@ typedef struct {
 
 void bridge_get_tx_info(bridge_tx_info_t *out);
 
+// ───── Line-coding passthrough (RFC2217 Layer B) ────────────────────────
+//
+// Thin source-op passthroughs used by the RFC2217 codec in sink_tcp.  The
+// bridge snapshots the current source under its own mutex, releases it, then
+// calls the source op — so these NEVER hold s_br.mtx while the source takes
+// its tx-lock (the load-bearing lock-order rule; see source.h struct
+// source_ops).  The caller (sink) must likewise NOT hold the sink mutex.
+// Values are CDC form (bits 5..8, parity 0N/1O/2E/3M/4S, stop 0=1/1=1.5/2=2).
+//
+//   apply  — push a new line coding to the wire (an RFC2217 controller did SET-*)
+//   revert — restore the device's NVS/global default (controller released)
+//   get    — read the current line coding (display shadow) for answer-with-current
+esp_err_t bridge_apply_line_coding(uint32_t baud, uint8_t bits,
+                                   uint8_t parity, uint8_t stop);
+void      bridge_revert_line_coding(void);
+void      bridge_get_line_coding(uint32_t *baud, uint8_t *bits,
+                                 uint8_t *parity, uint8_t *stop);
+
 // Statistik / Status.
 typedef struct {
     uint32_t  rx_bytes_total;
