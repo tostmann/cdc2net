@@ -4,24 +4,37 @@ Transparent **USB-Host-CDC → network bridge** for the ESP32-S3 — a
 ser2net-style gateway that puts an unmodified USB serial stick onto the
 network (WiFi now, Ethernet later) **without touching the stick's firmware**.
 
-Built for the **CUL / TUL / EUL** line:
+Built for the **CUL / TUL / EUL** line, but it bridges any common USB serial
+stick:
 
-- **legacy CUL** — native CDC-ACM (LUFA / ATmega32U4)
-- **modern devices** — USB-Serial-JTAG of the ESP32-C3/C6 (CDC-ACM compliant)
+- **native CDC-ACM** — legacy CUL (LUFA / ATmega32U4) and the USB-Serial-JTAG
+  of modern ESP32-C3/C6 devices
+- **USB-serial bridge chips** — FTDI (FT2xx), WCH CH340 / CH341, and Silicon
+  Labs CP210x, opened through their vendor (VCP) drivers so the chip wire
+  framing is handled and the UART baud is actually set
 
-The S3 is the USB host: it opens the stick's CDC-ACM interface and fans the
-raw byte stream out to TCP clients (multi-client). No protocol framing, no
-RFC2217 — a plain socket, so FHEM and friends talk to it exactly like a local
-`CUL`, just over `host:port`.
+The S3 is the USB host: it opens the stick and fans its raw byte stream out to
+TCP clients (multi-client). Raw clients get a plain socket — no framing — so
+FHEM and friends talk to it exactly like a local `CUL`, just over `host:port`;
+clients that need to set the line rate at runtime can use **RFC2217** on the
+same port.
 
 ![CDC2NET web interface](images/WebUI.png)
 
 ## Features
 
 - **Transparent raw-TCP pipe** — default port `2329`, multiple clients fan-out.
-- **USB host CDC-ACM** — opens any CDC-ACM stick (legacy CUL and the
-  USB-Serial-JTAG of modern C3/C6 devices), shows its USB vendor/product
-  strings.
+- **USB host, multi-chip** — native CDC-ACM (CUL/TUL/EUL, C3/C6
+  USB-Serial-JTAG) **plus** the common USB-serial bridge chips — FTDI FT2xx,
+  WCH CH340/CH341, Silicon Labs CP210x — via their VCP drivers; shows the
+  stick's USB vendor/product strings.
+- **Per-port serial config** — baud / data bits / parity / stop bits per
+  device, set in the web UI and persisted in NVS (keyed by the stick's USB
+  serial, else its VID:PID). Native CDC sticks (culfw) are baud-agnostic;
+  real-UART bridges get the wire rate set.
+- **RFC2217** — optional dynamic serial config (telnet COM-PORT-OPTION) over
+  the raw-TCP port. Raw clients stay byte-transparent; a single controlling
+  connection owns the line parameters.
 - **WiFi onboarding** — Improv-Serial right after flashing, or a captive
   portal. Static-IP or DHCP, configurable TCP port, a connectivity watchdog.
 - **Web UI** on port 80 — status, configuration, logs, and OTA.
