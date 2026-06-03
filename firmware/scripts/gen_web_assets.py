@@ -12,6 +12,7 @@ Atomic write + gzip roundtrip validation (NFS-safe, mtime=0 deterministic).
 """
 import gzip
 import os
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)                       # firmware/
@@ -19,11 +20,50 @@ SRC  = os.path.join(ROOT, "web", "index.html")
 OUT  = os.path.join(ROOT, "src", "web_assets.h")
 
 
+def _read_text_source_nfs(path, markers=(b"<html", b"</html>"), retries=6):
+    """NFS-safe Read einer Text-Quelle. Ein Read ueber NFS kann einen
+    NUL-praefixierten ersten 4-KB-Block liefern (lazy write-back race): die
+    Laenge stimmt, der Inhalt ist Muell. Validiere den INHALT (keine NUL-Bytes
+    + erwartete Marker, nicht nur Laenge) und lies bei Korruption neu — mit
+    posix_fadvise(DONTNEED)-Cache-Drop, damit der Retry frisch vom NFS-Server
+    holt; sonst lauter Abbruch. Der gzip-roundtrip-Assert unten faengt das
+    NICHT, weil er gegen die schon-korrupte Quelle prueft. Portiert aus
+    BoseFix32 scripts/version_bump.py (Vorfall 2026-06-03: web/index.html mit
+    4096 NUL-Bytes am Anfang -> embeddete UI ohne <head>/<title>)."""
+    last = b""
+    for attempt in range(retries):
+        with open(path, "rb") as fi:
+            raw = fi.read()
+        if raw and b"\x00" not in raw and all(m in raw.lower() for m in markers):
+            return raw
+        last = raw
+        print("[nfs-read] %s sieht korrupt aus (Versuch %d/%d: len=%d, NUL=%d) "
+              "-> Page-Cache verwerfen + re-read"
+              % (os.path.basename(path), attempt + 1, retries, len(raw),
+                 raw.count(bytes(1))))
+        try:
+            fd = os.open(path, os.O_RDONLY)
+            try:
+                os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+            finally:
+                os.close(fd)
+        except (AttributeError, OSError):
+            pass
+        time.sleep(0.4)
+    raise RuntimeError(
+        "[nfs-read] %s blieb nach %d Reads korrupt (NUL=%d Bytes, len=%d) — "
+        "NFS-write-back-race oder Quelle persistent kaputt. Abbruch, statt eine "
+        "kaputte UI zu embedden. Quelle pruefen / aus git wiederherstellen."
+        % (path, retries, last.count(bytes(1)), len(last)))
+
+
 def main():
-    html = open(SRC, "r", encoding="utf-8").read()
+    html = _read_text_source_nfs(SRC).decode("utf-8")
     # Splice the busware logo (base64 PNG) into the data: URL placeholder so
     # the 26 KB blob isn't hand-edited in the HTML source.
-    logo = open(os.path.join(ROOT, "web", "busware_logo.b64")).read().strip()
+    logo = _read_text_source_nfs(
+        os.path.join(ROOT, "web", "busware_logo.b64"), markers=()
+    ).decode("utf-8").strip()
     assert "__LOGO__" in html, "index.html is missing the __LOGO__ placeholder"
     html = html.replace("__LOGO__", logo)
     data = html.encode("utf-8")
