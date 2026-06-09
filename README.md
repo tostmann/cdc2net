@@ -121,7 +121,12 @@ docs/                design notes and roadmap
 
 ## License
 
-GPL-2.0-or-later (see the SPDX headers in the sources).
+CDC2NET is licensed under the **GNU General Public License v2.0 or later**
+(GPL-2.0-or-later) — see [`LICENSE`](LICENSE) for the full text. Every source
+file carries an `SPDX-License-Identifier: GPL-2.0-or-later` header.
+
+© 2026 Dirk Tostmann. The vendored ESP-IDF components under
+`firmware/components/` retain their own upstream licenses (Apache-2.0 / MIT).
 
 ---
 
