@@ -19,6 +19,8 @@ FHEM and friends talk to it exactly like a local `CUL`, just over `host:port`;
 clients that need to set the line rate at runtime can use **RFC2217** on the
 same port.
 
+![A CUL stick with an ESP32-S3 dev board attached](images/CUL2Net.jpeg)
+
 ![CDC2NET web interface](images/WebUI.png)
 
 ## Features
