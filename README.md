@@ -88,6 +88,13 @@ Plug a stick into the host port and point your software at the raw-TCP port
 define CUL_0 CUL cdc2net.local:2329 1234
 ```
 
+> **Power the host port.** The stick draws its 5 V from the S3's USB-OTG host
+> port, so that port has to actually supply VBUS. On dev boards with a passive
+> VBUS path (no on-board 5 V switch) the host port only passes through what the
+> board is fed — feed the board from a solid 5 V source. If a stick doesn't
+> enumerate, check VBUS at the host connector first: it should sit near 5 V (a
+> sagging ~4.5 V already causes flaky or failed enumeration).
+
 Open `http://cdc2net.local/` for live status, WiFi/network/port
 configuration, logs, and firmware updates.
 
