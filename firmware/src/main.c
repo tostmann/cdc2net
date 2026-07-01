@@ -21,7 +21,17 @@
 
 #include "version.h"
 #include "bridge.h"
+#include "source.h"
+// Source selection (Kconfig choice CDC2NET_SOURCE_*).  v0.1 ships USB only; the
+// UART (EUL/TUL serial downlink) and Thread/RCP sources slot in here as extra
+// #elif branches when their missions land (see docs/merge-targets.md).
+#if defined(CONFIG_CDC2NET_SOURCE_USB)
 #include "source_usb.h"
+#elif defined(CONFIG_CDC2NET_SOURCE_UART)
+#include "source_uart.h"
+#else
+#error "no CDC2NET source selected — set a CONFIG_CDC2NET_SOURCE_* option (Kconfig.projbuild)"
+#endif
 #include "sink_tcp.h"
 #include "net.h"
 #include "improv_glue.h"
@@ -30,10 +40,16 @@
 #include "webui.h"
 #include "config.h"
 #include "health.h"
+#if defined(CONFIG_CDC2NET_EEPROM_M24C32)
+#include "eeprom_m24c32.h"   // M24C32 config-EEPROM boot self-test (C6 EUL carrier)
+#endif
+#if defined(CONFIG_CDC2NET_MISSION_TBR)
+#include "mission_tbr.h"     // experimental on-device OpenThread BR on W5500 backbone
+#endif
 
 static const char *TAG = "cdc2net";
 
-static source_t *s_usb;
+static source_t *s_src;
 
 void app_main(void)
 {
@@ -45,14 +61,28 @@ void app_main(void)
     printf("=================================================\n");
     printf("  CDC2NET   v%s   (M4: pipe + mDNS + WebUI/OTA)\n", FW_VERSION_STRING);
     printf("  built     %s\n", FW_BUILD_DATE);
-    printf("  target    ESP32-S3   USB-Host-CDC -> raw-TCP\n");
+#if defined(CONFIG_CDC2NET_SOURCE_USB)
+    printf("  source    USB-Host-CDC (CUL/TUL/EUL + FTDI/CH34x/CP210x)\n");
+#elif defined(CONFIG_CDC2NET_SOURCE_UART)
+    printf("  source    onboard radio over UART (EUL/TUL serial downlink)\n");
+#endif
+    printf("  target    %s   -> raw-TCP\n", CONFIG_IDF_TARGET);
     printf("=================================================\n");
     ESP_LOGW(TAG, "boot: reset_reason=%d", (int)esp_reset_reason());
 
-    // Bridge + USB source first (USB host before WiFi PHY — #15079 ordering).
+    // Bridge + source first (USB host before WiFi PHY — #15079 ordering).
     bridge_init();
-    s_usb = source_usb_init();
-    bridge_attach_source(s_usb);     // wires rx_sink before the CUL opens
+#if defined(CONFIG_CDC2NET_SOURCE_USB)
+    s_src = source_usb_init();
+#elif defined(CONFIG_CDC2NET_SOURCE_UART)
+    s_src = source_uart_init();
+#else
+    // Symmetric with the include block above: a future mission that adds a
+    // source to the Kconfig choice + include block but forgets its construct
+    // #elif here fails loudly at compile time instead of leaving s_src NULL.
+#error "no CDC2NET source constructed — add the matching CONFIG_CDC2NET_SOURCE_* branch"
+#endif
+    bridge_attach_source(s_src);     // wires rx_sink before the source opens
 
     vTaskDelay(pdMS_TO_TICKS(3000)); // let the CUL enumerate before WiFi
 
@@ -71,8 +101,21 @@ void app_main(void)
     bridge_attach_sink(tcp, "rawtcp");
     sink_start(tcp);
 
+#if defined(CONFIG_CDC2NET_EEPROM_M24C32)
+    // M24C32 config-EEPROM presence + non-destructive RMW self-test (C6 EUL
+    // carrier).  Independent of net/NVS; runs before webui so /api/status has
+    // the result on its first poll.  Absent chip → state 0, never asserts.
+    eeprom_init_and_test();
+#endif
+
     // WebUI status/OTA server on :80 (also serves the captive portal).
     webui_init(0);
+
+#if defined(CONFIG_CDC2NET_MISSION_TBR)
+    // Experimental: bring up a full on-device OpenThread Border Router on the
+    // W5500 backbone (C6 native 802.15.4 radio), alongside the bridge.
+    mission_tbr_start();
+#endif
 
     // Subscribe this (main) task to the Task-WDT so a wedged firmware path is
     // caught and panic-rebooted (CONFIG_ESP_TASK_WDT_TIMEOUT_S=5, PANIC=y).
@@ -92,12 +135,11 @@ void app_main(void)
             vTaskDelay(pdMS_TO_TICKS(1000));
             esp_task_wdt_reset();            // feed well under the 5 s timeout
         }
-        source_usb_stats_t us;  source_usb_get_stats(&us);
         bridge_stats_t     bs;  bridge_get_stats(&bs);
         sink_tcp_stats_t   ts;  sink_tcp_get_stats(&ts);
         ESP_LOGI(TAG, "STATUS: src=%s | bridge rx=%u tx=%u | tcp :%u cli=%d "
                       "rx=%u tx=%u | net=%s ip=%s | heap=%u",
-                 source_describe(s_usb),
+                 source_describe(s_src),
                  (unsigned)bs.rx_bytes_total, (unsigned)bs.tx_bytes_total,
                  ts.port, ts.active_clients,
                  (unsigned)ts.rx_bytes_from_clients,

@@ -1,0 +1,11 @@
+# Name,   Type, SubType, Offset,   Size,    Flags
+# 4 MB flash (EUL/TUL C6 module — the busware stick ships 4 MB, NOT the 8 MB the
+# esp32-c6-devkitc-1 board JSON assumes).  Two ~1.98 MB OTA slots + 64 KB
+# coredump = exactly 4 MB.  App (~1.37 MB) fits with headroom.  No factory
+# partition — first boot lives in ota_0.
+nvs,      data, nvs,     0x9000,   0x4000
+otadata,  data, ota,     0xd000,   0x2000
+phy_init, data, phy,     0xf000,   0x1000
+ota_0,    app,  ota_0,   0x10000,  0x1F0000
+ota_1,    app,  ota_1,   0x200000, 0x1F0000
+coredump, data, coredump,0x3F0000, 0x10000

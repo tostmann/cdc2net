@@ -49,6 +49,7 @@ static struct {
     char              serial[SERIALCFG_KEY_LEN];   // USB iSerialNumber ("" if none)
     char              key[SERIALCFG_KEY_LEN];      // device key: serial else "VVVV:PPPP"
     bool              is_vcp;                       // current device opened via a VCP driver
+    const char       *kind;                         // driver-path tag (FTDI/CH34x/CP210x/CDC-ACM, NULL when closed) — points to an open_dispatch() string literal
     cdc_acm_line_coding_t current_lc;               // last-applied line coding (display shadow)
     uint8_t           lc_source;                    // 0 default / 1 nvs / 2 rfc2217
     uint32_t          rx_bytes;
@@ -193,8 +194,9 @@ static void derive_key(uint16_t vid, uint16_t pid, char *out, size_t cap)
 // shadow.  Serialized with op_tx() via tx_mtx (both touch S.cdc).  On the VCP
 // path it pushes a real SET_LINE_CODING; for native CDC it only records the
 // value for display (culfw ignores the USB baud).  src: 0 default/1 nvs/2 rfc2217.
-esp_err_t source_usb_apply_line_coding(uint32_t baud, uint8_t bits,
-                                       uint8_t parity, uint8_t stop, uint8_t src)
+// Internal helper; the vtable entry is op_apply_line_coding (takes a source_t*).
+static esp_err_t apply_lc(uint32_t baud, uint8_t bits,
+                          uint8_t parity, uint8_t stop, uint8_t src)
 {
     xSemaphoreTake(S.tx_mtx, portMAX_DELAY);
     cdc_acm_line_coding_t lc = {
@@ -259,6 +261,7 @@ static void stick_task(void *arg)
         S.cdc       = cdc;
         S.connected = true;
         S.is_vcp    = is_vcp;
+        S.kind      = kind;          // FTDI/CH34x/CP210x/CDC-ACM — for the STATUS line
         derive_key(vid, pid, S.key, sizeof(S.key));
 
         // Resolve this device's line coding: per-device NVS entry, else the
@@ -272,8 +275,7 @@ static void stick_task(void *arg)
             scl = serialcfg_default();
             lc_src = 0;                 // global fallback
         }
-        if (source_usb_apply_line_coding(scl.baud, scl.bits, scl.parity,
-                                         scl.stop, lc_src) != ESP_OK)
+        if (apply_lc(scl.baud, scl.bits, scl.parity, scl.stop, lc_src) != ESP_OK)
             ESP_LOGW(TAG, "line coding set failed");
         if (!is_vcp) {
             // Native CDC-ACM: assert DTR+RTS (some devices gate TX on DTR).
@@ -292,6 +294,7 @@ static void stick_task(void *arg)
         S.connected = false;
         S.cdc       = NULL;
         S.is_vcp    = false;
+        S.kind      = NULL;
         S.key[0]    = '\0';
         S.serial[0] = '\0';
         cdc_acm_host_close(cdc);
@@ -332,7 +335,17 @@ static esp_err_t op_set_line_coding(source_t *src, uint32_t baud, uint8_t bits,
                                     uint8_t parity, uint8_t stop)
 {
     (void)src;
-    return source_usb_apply_line_coding(baud, bits, parity, stop, 2 /* rfc2217 */);
+    return apply_lc(baud, bits, parity, stop, 2 /* rfc2217 */);
+}
+
+// apply (vtable): the WebUI/NVS entry point — apply + stamp provenance.  Thin
+// wrapper over apply_lc so webui.c reaches it source-agnostically via the vtable
+// (lc_src 0 default / 1 nvs / 2 rfc2217).
+static esp_err_t op_apply_line_coding(source_t *src, uint32_t baud, uint8_t bits,
+                                      uint8_t parity, uint8_t stop, uint8_t lc_src)
+{
+    (void)src;
+    return apply_lc(baud, bits, parity, stop, lc_src);
 }
 
 // revert: the RFC2217 controller released.  Re-resolve this device's NVS entry
@@ -346,7 +359,7 @@ static void op_revert_line_coding(source_t *src)
     // on disconnect and rewrites it via derive_key() on the next open, so an
     // unguarded read here could race a torn key with a controller-release that
     // interleaves a USB disconnect.  Release tx_mtx BEFORE the apply below —
-    // tx_mtx is non-recursive and source_usb_apply_line_coding() re-takes it.
+    // tx_mtx is non-recursive and apply_lc() re-takes it.
     char key[SERIALCFG_KEY_LEN];
     xSemaphoreTake(S.tx_mtx, portMAX_DELAY);
     snprintf(key, sizeof(key), "%s", S.key);
@@ -360,7 +373,7 @@ static void op_revert_line_coding(source_t *src)
         scl = serialcfg_default();
         lc_src = 0;
     }
-    source_usb_apply_line_coding(scl.baud, scl.bits, scl.parity, scl.stop, lc_src);
+    apply_lc(scl.baud, scl.bits, scl.parity, scl.stop, lc_src);
 }
 
 // get: read back the last-applied coding (display shadow; no GET on FTDI/CH34x).
@@ -387,9 +400,44 @@ static esp_err_t op_reset(source_t *src)
 static const char *op_describe(source_t *src)
 {
     (void)src;
-    snprintf(S.describe_buf, sizeof(S.describe_buf), "USB CDC %04X:%04X %s",
-             S.vid, S.pid, S.connected ? "open" : "closed");
+    // Lead with the driver-path tag (FTDI/CH34x/CP210x/CDC-ACM) so the STATUS
+    // line distinguishes a VCP-bound stick from a native CDC-ACM one at a glance.
+    snprintf(S.describe_buf, sizeof(S.describe_buf), "%s %04X:%04X %s",
+             S.kind ? S.kind : "USB", S.vid, S.pid, S.connected ? "open" : "closed");
     return S.describe_buf;
+}
+
+// stats snapshot (vtable): connected flag, VID/PID, manuf/product, rx/tx bytes.
+static void op_get_stats(source_t *src, source_stats_t *out)
+{
+    (void)src;
+    if (!out) return;
+    out->connected = S.connected;
+    out->vid       = S.vid;
+    out->pid       = S.pid;
+    out->rx_bytes  = S.rx_bytes;
+    out->tx_bytes  = S.tx_bytes;
+    snprintf(out->manuf,   sizeof(out->manuf),   "%s", S.manuf);
+    snprintf(out->product, sizeof(out->product), "%s", S.product);
+}
+
+// serial-info snapshot (vtable): per-device line coding + key + lc_source.
+static void op_get_serial_info(source_t *src, source_serial_info_t *out)
+{
+    (void)src;
+    if (!out) return;
+    memset(out, 0, sizeof(*out));
+    out->connected = S.connected;
+    out->is_vcp    = S.is_vcp;
+    out->vid       = S.vid;
+    out->pid       = S.pid;
+    out->baud      = S.current_lc.dwDTERate;
+    out->bits      = S.current_lc.bDataBits;
+    out->parity    = S.current_lc.bParityType;
+    out->stop      = S.current_lc.bCharFormat;
+    out->lc_source = S.lc_source;
+    snprintf(out->serial, sizeof(out->serial), "%s", S.serial);
+    snprintf(out->key,    sizeof(out->key),    "%s", S.key);
 }
 
 static const struct source_ops s_ops = {
@@ -400,6 +448,9 @@ static const struct source_ops s_ops = {
     .set_line_coding    = op_set_line_coding,
     .revert_line_coding = op_revert_line_coding,
     .get_line_coding    = op_get_line_coding,
+    .apply_line_coding  = op_apply_line_coding,
+    .get_stats          = op_get_stats,
+    .get_serial_info    = op_get_serial_info,
 };
 
 source_t *source_usb_init(void)
@@ -429,33 +480,4 @@ source_t *source_usb_init(void)
 
     ESP_LOGI(TAG, "USB host + CDC-ACM source installed");
     return &S.source;
-}
-
-void source_usb_get_stats(source_usb_stats_t *out)
-{
-    if (!out) return;
-    out->connected = S.connected;
-    out->vid       = S.vid;
-    out->pid       = S.pid;
-    out->rx_bytes  = S.rx_bytes;
-    out->tx_bytes  = S.tx_bytes;
-    snprintf(out->manuf,   sizeof(out->manuf),   "%s", S.manuf);
-    snprintf(out->product, sizeof(out->product), "%s", S.product);
-}
-
-void source_usb_get_serial_info(source_usb_serial_info_t *out)
-{
-    if (!out) return;
-    memset(out, 0, sizeof(*out));
-    out->connected = S.connected;
-    out->is_vcp    = S.is_vcp;
-    out->vid       = S.vid;
-    out->pid       = S.pid;
-    out->baud      = S.current_lc.dwDTERate;
-    out->bits      = S.current_lc.bDataBits;
-    out->parity    = S.current_lc.bParityType;
-    out->stop      = S.current_lc.bCharFormat;
-    out->lc_source = S.lc_source;
-    snprintf(out->serial, sizeof(out->serial), "%s", S.serial);
-    snprintf(out->key,    sizeof(out->key),    "%s", S.key);
 }

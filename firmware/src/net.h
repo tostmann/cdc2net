@@ -69,8 +69,14 @@ const char *net_ap_ssid(void);
 // mDNS/AP-Hostname `cdc2net-XXXX` — wird unabhängig vom Mode bestimmt.
 const char *net_hostname(void);
 
-// Live STA gateway as "x.x.x.x" (or "0.0.0.0").  Buffer internal.
+// Live default gateway of the ACTIVE bearer (ETH wins when up) as "x.x.x.x".
 const char *net_gw_str(void);
+
+// WiFi/STA-specific status (the getters above report the ACTIVE bearer; these
+// always report the WiFi side — needed for the per-interface WebUI tiles).
+bool        net_wifi_connected(void);
+const char *net_wifi_ip_str(void);
+const char *net_wifi_gw_str(void);
 
 // Async-Scan auslösen + auf Result blocken (max ~6 s).  Schreibt bis zu
 // `cap` Einträge in `out`, gibt die effektive Anzahl in `*got` zurück.

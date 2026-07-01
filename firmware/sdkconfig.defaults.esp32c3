@@ -1,0 +1,18 @@
+# CDC2NET — ESP32-C3 overlay (EUL/TUL low-flash stick, 4 MB, WiFi-only).
+# Mission: onboard EnOcean TCM515 over a hardware UART (byte-transparent).
+# WiFi-only — the C3 legacy stick has NO FPC/W5500 header.  Appended to
+# sdkconfig.defaults automatically for the C3 build.
+
+# ---- Mission: onboard-radio UART source ----------------------------------
+CONFIG_CDC2NET_SOURCE_UART=y
+
+# ---- Flash ---------------------------------------------------------------
+# 4 MB on the seeed XIAO ESP32-C3.  DIO for clone-safety consistency.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+
+# ---- Console -------------------------------------------------------------
+# Console on the built-in USB-Serial-JTAG (the XIAO C3 USB-C is wired to the
+# C3 native USB GPIO18/19).  Frees UART0 (GPIO20/21) for the TCM downlink.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y

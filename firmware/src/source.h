@@ -31,7 +31,9 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <string.h>
 #include "esp_err.h"
+#include "serialcfg.h"     // SERIALCFG_KEY_LEN — for source_serial_info_t below
 
 typedef struct source source_t;
 typedef struct sink   sink_t;
@@ -42,6 +44,33 @@ typedef struct sink   sink_t;
 // Wird von der Source intern aufgerufen sobald RX-Bytes da sind; die
 // Implementation liefert das an `bridge_on_source_rx()`.
 typedef void (*source_rx_sink_t)(void *ctx, const uint8_t *data, size_t len);
+
+// ── Snapshot views — what the WebUI (/api/status, /api/serial) and the
+// periodic STATUS log read from whatever source is attached.  Plain data,
+// filled by the get_stats / get_serial_info ops.  Every source populates
+// what it knows; concepts it lacks stay zero.  (Moved here from source_usb.h
+// so webui.c/main.c are source-agnostic — see docs/merge-targets.md §3.1.)
+
+typedef struct {
+    bool     connected;
+    uint16_t vid;
+    uint16_t pid;
+    char     manuf[48];     // USB iManufacturer (or a source-specific label)
+    char     product[48];   // USB iProduct
+    uint32_t rx_bytes;
+    uint32_t tx_bytes;
+} source_stats_t;
+
+typedef struct {
+    bool     connected;
+    bool     is_vcp;        // opened via a real-UART VCP driver (vs native CDC)
+    uint16_t vid, pid;
+    char     serial[SERIALCFG_KEY_LEN];   // device iSerialNumber ("" if none)
+    char     key[SERIALCFG_KEY_LEN];      // resolved device key (serial / VID:PID)
+    uint32_t baud;          // effective line coding (display shadow)
+    uint8_t  bits, parity, stop;
+    uint8_t  lc_source;     // 0 default / 1 nvs / 2 rfc2217
+} source_serial_info_t;
 
 struct source_ops {
     // Rohbytes Richtung Wire schicken.  Blocking erlaubt; Caller-Erwartung:
@@ -83,6 +112,20 @@ struct source_ops {
     void      (*revert_line_coding)(source_t *src);
     void      (*get_line_coding)(source_t *src, uint32_t *baud, uint8_t *bits,
                                  uint8_t *parity, uint8_t *stop);
+
+    // ── Status / serial-config snapshots (WebUI + STATUS line) ───────────
+    // Optional (NULL = nothing to report; the wrapper zeroes *out).
+    //   get_stats        — connected / VID / PID / manuf / product / rx / tx
+    //   get_serial_info  — per-device line coding + key + lc_source provenance
+    void (*get_stats)(source_t *src, source_stats_t *out);
+    void (*get_serial_info)(source_t *src, source_serial_info_t *out);
+
+    // apply_line_coding — the WebUI/NVS apply path: like set_line_coding but
+    // also STAMPS provenance (lc_src 0 default / 1 nvs / 2 rfc2217) into the
+    // display shadow.  Same lock-order rule as the line-coding ops above.
+    // NULL = source has no settable coding (same gate as set_line_coding).
+    esp_err_t (*apply_line_coding)(source_t *src, uint32_t baud, uint8_t bits,
+                                   uint8_t parity, uint8_t stop, uint8_t lc_src);
 };
 
 struct source {
@@ -119,6 +162,22 @@ static inline void source_get_line_coding(source_t *src, uint32_t *baud,
         uint8_t *bits, uint8_t *parity, uint8_t *stop) {
     if (src && src->ops && src->ops->get_line_coding)
         src->ops->get_line_coding(src, baud, bits, parity, stop);
+}
+static inline void source_get_stats(source_t *src, source_stats_t *out) {
+    if (!out) return;
+    if (src && src->ops && src->ops->get_stats) src->ops->get_stats(src, out);
+    else memset(out, 0, sizeof(*out));
+}
+static inline void source_get_serial_info(source_t *src, source_serial_info_t *out) {
+    if (!out) return;
+    if (src && src->ops && src->ops->get_serial_info) src->ops->get_serial_info(src, out);
+    else memset(out, 0, sizeof(*out));
+}
+static inline esp_err_t source_apply_line_coding(source_t *src, uint32_t baud,
+        uint8_t bits, uint8_t parity, uint8_t stop, uint8_t lc_src) {
+    return src && src->ops && src->ops->apply_line_coding
+        ? src->ops->apply_line_coding(src, baud, bits, parity, stop, lc_src)
+        : ESP_ERR_NOT_SUPPORTED;
 }
 
 // ───── sink-Interface (TCP / UDP / WebUI / …) ───────────────────────────

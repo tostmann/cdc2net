@@ -6,6 +6,7 @@ __pycache__/
 build/
 sdkconfig*
 !sdkconfig.defaults
+!sdkconfig.defaults.*
 managed_components/
 dependencies.lock
 compile_commands.json
@@ -37,6 +38,12 @@ binaries/
 webflasher/*.bin
 webflasher/manifest.json
 webflasher/MD5SUMS
+# per-mission release subdirs (webflasher/<mission>/… = factory/firmware/manifest/
+# MD5SUMS) are pure build output → ignore the CONTENTS (not the dir itself, else
+# the index.html re-include below can't apply — git can't un-ignore inside an
+# ignored dir), EXCEPT the tracked per-mission webflash landing page index.html.
+webflasher/*/*
+!webflasher/*/index.html
 
 # Local deploy target for deploy.sh (DEPLOY_DEST=internal-host:path) — never track.
 firmware/scripts/deploy.conf

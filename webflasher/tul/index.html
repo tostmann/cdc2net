@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TUL — KNX Gateway · busware Web Flasher</title>
+<meta name="description" content="One-click browser flasher for the busware TUL — a transparent KNX-TP (NCN5130) to raw-TCP bridge. ESP32-C3 / C6, auto-detected.">
+<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+<style>
+  body{font-family:-apple-system,"Segoe UI",system-ui,sans-serif;max-width:40em;margin:0 auto;
+       padding:2em 1em;color:#1d2733;background:#f4f6f8;line-height:1.5;text-align:center}
+  img{height:44px;margin-bottom:.4em}
+  h1{color:#1565a8;font-size:1.4em;margin:.2em 0}
+  p.sub{color:#6b7785;margin:.2em 0 1.4em}
+  .card{background:#fff;border:1px solid #dfe4ea;border-left:4px solid #2e8b3d;
+        border-radius:10px;padding:1.4em;margin:1em 0}
+  esp-web-install-button{--esp-tools-button-color:#1565a8;--esp-tools-button-text-color:#fff}
+  code{background:#eef2f6;padding:.1em .35em;border-radius:3px;font-family:ui-monospace,Menlo,monospace;font-size:.9em}
+  a{color:#1565a8}
+  .hint{color:#6b7785;font-size:.85em;margin-top:1em}
+  footer{color:#6b7785;font-size:.82em;margin-top:2em;border-top:1px solid #dfe4ea;padding-top:1em}
+</style>
+</head>
+<body>
+<img src="../busware_logo.png" alt="busware">
+<h1>TUL — KNX Gateway</h1>
+<p class="sub">Transparent KNX-TP (ON-Semi NCN5130) &harr; raw-TCP bridge for the busware TUL stick.</p>
+<div class="card">
+  <p>Plug in your <strong>busware TUL</strong>, then:</p>
+  <esp-web-install-button manifest="manifest.json"></esp-web-install-button>
+  <p class="hint">The installer detects your chip (ESP32-C3 or C6) and flashes the
+     matching build. Wi-Fi is set up right after via Improv. Use Chrome, Edge or Opera.</p>
+</div>
+<p style="font-size:.9em">After flashing it appears on your network — point knxd/FHEM at
+  <code>&lt;ip&gt;:2329</code> (raw TP-UART, e.g. <code>knxd -b tpuarttcp:&lt;ip&gt;:2329</code>).</p>
+<p style="font-size:.9em">Manifest: <a href="manifest.json"><code>manifest.json</code></a> ·
+  <a href="https://install.busware.de/cdc2net/">all busware flashers</a></p>
+<footer>busware · CDC2NET firmware line · GPL-2.0-or-later ·
+  <a href="https://github.com/tostmann/cdc2net">github.com/tostmann/cdc2net</a></footer>
+</body>
+</html>

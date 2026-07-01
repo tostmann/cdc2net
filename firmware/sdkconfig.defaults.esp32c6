@@ -1,0 +1,33 @@
+# CDC2NET — ESP32-C6 overlay (EUL/TUL serial-downlink generation, 8 MB).
+# Mission: onboard radio (EnOcean TCM515) over a hardware UART (byte-transparent)
+# + W5500 SPI ethernet (FPC add-on).  Appended to sdkconfig.defaults for C6.
+
+# ---- Mission: onboard-radio UART source ----------------------------------
+CONFIG_CDC2NET_SOURCE_UART=y
+
+# ---- W5500 SPI ethernet (FPC add-on; line-wide on the C6 generation) ------
+# CDC2NET_ETH_W5500 gates net_eth.c + the esp_eth REQUIRES in src/CMakeLists.
+# The in-core esp_eth W5500 driver needs the two ETH_* options below (IDF 5.5.x
+# still ships the SPI-Ethernet chip drivers in core; removed only in 6.0).
+CONFIG_CDC2NET_ETH_W5500=y
+CONFIG_ETH_USE_SPI_ETHERNET=y
+CONFIG_ETH_SPI_ETHERNET_W5500=y
+
+# ---- M24C32 I2C config EEPROM (C6 EUL/TUL carrier) ------------------------
+# CDC2NET_EEPROM_M24C32 gates eeprom_m24c32.c + the esp_driver_i2c REQUIRES.
+# Boot self-test surfaces the WebUI "EEPROM" tile (SDA=22 SCL=23 WE=15 default).
+# Absent/unpopulated chip is handled gracefully (tile shows "absent").
+CONFIG_CDC2NET_EEPROM_M24C32=y
+
+# ---- Flash ---------------------------------------------------------------
+# 4 MB on the busware EUL/TUL C6 module (the esp32-c6-devkitc-1 board JSON
+# assumes 8 MB, but the real stick ships 4 MB — verified on hardware: an 8 MB
+# header makes the flash-size probe assert + panic-loop).  DIO for clone-safety.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+
+# ---- Console -------------------------------------------------------------
+# Console on the built-in USB-Serial-JTAG (the C6 devkit's USB port = console +
+# flashing).  C6 has no USB-OTG host and no #15079 PHY-sharing issue.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y

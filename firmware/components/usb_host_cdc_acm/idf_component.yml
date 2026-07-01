@@ -20,12 +20,10 @@ tags:
 - usb
 - usb_host
 - cdc
-targets:
-- esp32s2
-- esp32s3
-- esp32p4
-- esp32h4
-- esp32s31
-- linux
+# Local removal (CDC2NET merge): the upstream `targets:` list excluded C3/C6.
+# For a LOCAL component in components/ a targets-mismatch is a HARD ERROR (not a
+# silent exclude), which broke the C6 build at the manifest phase.  Exclusion is
+# done instead by the CMakeLists OTG guard (registers empty on non-OTG SoCs).
+# Do NOT re-add `targets:` here.  See docs/merge-targets.md §3.2.
 url: https://github.com/espressif/esp-usb/tree/master/host/class/cdc/usb_host_cdc_acm
 version: 2.4.0

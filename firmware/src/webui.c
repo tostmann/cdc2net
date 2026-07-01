@@ -8,7 +8,14 @@
 #include "version.h"
 #include "bridge.h"
 #include "net.h"
-#include "source_usb.h"
+#if defined(CONFIG_CDC2NET_ETH_W5500)
+#include "net_eth.h"
+#endif
+#if defined(CONFIG_CDC2NET_EEPROM_M24C32)
+#include "eeprom_m24c32.h"
+#endif
+#include "source.h"
+#include "serialcfg.h"
 #include "sink_tcp.h"
 #include "log_buffer.h"
 #include "ota_check.h"
@@ -23,6 +30,8 @@
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
 #include "esp_heap_caps.h"
+#include "esp_chip_info.h"
+#include "esp_mac.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <string.h>
@@ -37,15 +46,22 @@ static httpd_handle_t s_http;
 static const char *reset_reason_str(esp_reset_reason_t r)
 {
     switch (r) {
-    case ESP_RST_POWERON:  return "POWERON";
-    case ESP_RST_EXT:      return "EXT";
-    case ESP_RST_SW:       return "SW";
-    case ESP_RST_PANIC:    return "PANIC";
-    case ESP_RST_INT_WDT:  return "INT_WDT";
-    case ESP_RST_TASK_WDT: return "TASK_WDT";
-    case ESP_RST_WDT:      return "WDT";
-    case ESP_RST_BROWNOUT: return "BROWNOUT";
-    default:               return "UNKNOWN";
+    case ESP_RST_POWERON:   return "POWERON";
+    case ESP_RST_EXT:       return "EXT";
+    case ESP_RST_SW:        return "SW";
+    case ESP_RST_PANIC:     return "PANIC";
+    case ESP_RST_INT_WDT:   return "INT_WDT";
+    case ESP_RST_TASK_WDT:  return "TASK_WDT";
+    case ESP_RST_WDT:       return "WDT";
+    case ESP_RST_DEEPSLEEP: return "DEEPSLEEP";
+    case ESP_RST_BROWNOUT:  return "BROWNOUT";
+    case ESP_RST_SDIO:      return "SDIO";
+    case ESP_RST_USB:       return "USB";        // USB-Serial-JTAG peripheral reset
+    case ESP_RST_JTAG:      return "JTAG";
+    case ESP_RST_EFUSE:     return "EFUSE";
+    case ESP_RST_PWR_GLITCH:return "PWR_GLITCH";
+    case ESP_RST_CPU_LOCKUP:return "CPU_LOCKUP";
+    default:                return "UNKNOWN";
     }
 }
 
@@ -154,7 +170,7 @@ static const char *authmode_str(uint8_t a)
 static esp_err_t h_status(httpd_req_t *req)
 {
     bridge_stats_t     bs;  bridge_get_stats(&bs);
-    source_usb_stats_t us;  source_usb_get_stats(&us);
+    source_stats_t     us;  source_get_stats(bridge_get_source(), &us);
     sink_tcp_stats_t   ts;  sink_tcp_get_stats(&ts);
 
     char ssid_esc[200];
@@ -166,26 +182,70 @@ static esp_err_t h_status(httpd_req_t *req)
     cdc2net_cfg_t cfg;
     config_load(&cfg);
 
-    char buf[1850];
+#if defined(CONFIG_CDC2NET_ETH_W5500)
+    bool        eth_present = net_eth_present();
+    bool        eth_up      = net_eth_is_up();
+    const char *eth_ip      = net_eth_ip_str();
+    const char *eth_gw      = net_eth_gw_str();
+#else
+    bool        eth_present = false, eth_up = false;
+    const char *eth_ip = "0.0.0.0", *eth_gw = "0.0.0.0";
+#endif
+
+    // Device identity (for the WebUI "Device" tile): running chip + base MAC.
+    esp_chip_info_t chip;
+    esp_chip_info(&chip);
+    uint8_t mac[6] = {0};
+    esp_read_mac(mac, ESP_MAC_WIFI_STA);   // factory base MAC (same root as the hostname)
+    char mac_str[18];
+    snprintf(mac_str, sizeof(mac_str), "%02X:%02X:%02X:%02X:%02X:%02X",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+
+    // Feature gates + EEPROM block the WebUI uses to show/fill the M24C32 tile.
+    // Built in only on the C6 EUL carrier (CONFIG_CDC2NET_EEPROM_M24C32); on the
+    // bridge the gate is false and the tile stays hidden.  When compiled, the
+    // boot self-test result (state 0/1/2) + geometry are reported live; the
+    // eeprom block is emitted unconditionally (zeros when not compiled) so the
+    // JSON shape is uniform — the JS only reads it when features.eeprom===true.
+#if defined(CONFIG_CDC2NET_EEPROM_M24C32)
+    bool     feat_eeprom = true;
+    unsigned ee_state = eeprom_state();
+    unsigned ee_size  = eeprom_size();
+    unsigned ee_page  = eeprom_page();
+#else
+    bool     feat_eeprom = false;
+    unsigned ee_state = 0, ee_size = 0, ee_page = 0;
+#endif
+
+    char buf[2400];
     int n = snprintf(buf, sizeof(buf),
         "{"
           "\"fw\":{\"version\":\"%s\",\"built\":\"%s\"},"
-          "\"net\":{\"up\":%s,\"ssid\":\"%s\",\"ip\":\"%s\",\"gw\":\"%s\","
+          "\"features\":{\"eeprom\":%s},"
+          "\"wifi\":{\"up\":%s,\"ssid\":\"%s\",\"ip\":\"%s\",\"gw\":\"%s\","
                   "\"ap\":%s,\"host\":\"%s\"},"
+          "\"eth\":{\"present\":%s,\"up\":%s,\"ip\":\"%s\",\"gw\":\"%s\"},"
           "\"usb\":{\"connected\":%s,\"vid\":\"%04X\",\"pid\":\"%04X\","
                   "\"manuf\":\"%s\",\"product\":\"%s\",\"rx\":%u,\"tx\":%u},"
           "\"br\":{\"sinks\":%u,\"rx_bytes\":%u,\"tx_bytes\":%u,\"rx_pumps\":%u,\"tx_drop\":%u},"
           "\"tcp\":{\"port\":%u,\"clients\":%d,\"accepts\":%u,\"rx\":%u,\"tx\":%u},"
           "\"cfg\":{\"tcp_port\":%u,\"static_ip\":%s,\"ip\":\"%s\",\"mask\":\"%s\","
-                  "\"gw\":\"%s\",\"dns\":\"%s\",\"wdt_enable\":%s,\"wdt_timeout_s\":%u},"
+                  "\"gw\":\"%s\",\"dns\":\"%s\","
+                  "\"eth_static_ip\":%s,\"eth_ip\":\"%s\",\"eth_mask\":\"%s\","
+                  "\"eth_gw\":\"%s\",\"eth_dns\":\"%s\","
+                  "\"wdt_enable\":%s,\"wdt_timeout_s\":%u},"
           "\"sys\":{\"uptime_s\":%u,\"free_heap\":%u,\"min_free_heap\":%u,"
-                   "\"largest_block\":%u,\"reset_reason\":\"%s\"},"
+                   "\"largest_block\":%u,\"reset_reason\":\"%s\","
+                   "\"chip\":\"%s\",\"chip_rev\":%d,\"mac\":\"%s\"},"
           "\"health\":{\"boot_count\":%u,\"crash_count\":%u,\"wdt_reboots\":%u,"
-                      "\"wdt_subscribed\":%s}"
+                      "\"wdt_subscribed\":%s},"
+          "\"eeprom\":{\"state\":%u,\"size\":%u,\"page\":%u}"
         "}",
         FW_VERSION_STRING, FW_BUILD_DATE,
-        net_is_connected() ? "true" : "false", ssid_esc, net_ip_str(), net_gw_str(),
+        feat_eeprom ? "true" : "false",
+        net_wifi_connected() ? "true" : "false", ssid_esc, net_wifi_ip_str(), net_wifi_gw_str(),
         net_is_ap_mode() ? "true" : "false", net_hostname(),
+        eth_present ? "true" : "false", eth_up ? "true" : "false", eth_ip, eth_gw,
         us.connected ? "true" : "false", us.vid, us.pid,
         manuf_esc, prod_esc,
         (unsigned)us.rx_bytes, (unsigned)us.tx_bytes,
@@ -195,15 +255,19 @@ static esp_err_t h_status(httpd_req_t *req)
         ts.port, ts.active_clients, (unsigned)ts.total_accepts,
         (unsigned)ts.rx_bytes_from_clients, (unsigned)ts.tx_bytes_to_clients,
         cfg.tcp_port, cfg.static_ip ? "true" : "false", cfg.ip, cfg.mask,
-        cfg.gw, cfg.dns, cfg.wdt_enable ? "true" : "false", (unsigned)cfg.wdt_timeout_s,
+        cfg.gw, cfg.dns,
+        cfg.eth_static_ip ? "true" : "false", cfg.eth_ip, cfg.eth_mask, cfg.eth_gw, cfg.eth_dns,
+        cfg.wdt_enable ? "true" : "false", (unsigned)cfg.wdt_timeout_s,
         (unsigned)(esp_log_timestamp() / 1000),
         (unsigned)esp_get_free_heap_size(),
         (unsigned)esp_get_minimum_free_heap_size(),
         (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
         reset_reason_str(esp_reset_reason()),
+        CONFIG_IDF_TARGET, (int)chip.revision, mac_str,
         (unsigned)health_boot_count(), (unsigned)health_crash_count(),
         (unsigned)health_wdt_reboots(),
-        health_wdt_subscribed() ? "true" : "false");
+        health_wdt_subscribed() ? "true" : "false",
+        ee_state, ee_size, ee_page);
 
     if (n < 0 || n >= (int)sizeof(buf)) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "buf overflow");
@@ -415,11 +479,15 @@ static esp_err_t h_config_get(httpd_req_t *req)
 {
     cdc2net_cfg_t c;
     config_load(&c);
-    char buf[320];
+    char buf[512];
     int n = snprintf(buf, sizeof(buf),
         "{\"tcp_port\":%u,\"static_ip\":%s,\"ip\":\"%s\",\"mask\":\"%s\","
-        "\"gw\":\"%s\",\"dns\":\"%s\",\"wdt_enable\":%s,\"wdt_timeout_s\":%u}",
+        "\"gw\":\"%s\",\"dns\":\"%s\","
+        "\"eth_static_ip\":%s,\"eth_ip\":\"%s\",\"eth_mask\":\"%s\","
+        "\"eth_gw\":\"%s\",\"eth_dns\":\"%s\","
+        "\"wdt_enable\":%s,\"wdt_timeout_s\":%u}",
         c.tcp_port, c.static_ip ? "true" : "false", c.ip, c.mask, c.gw, c.dns,
+        c.eth_static_ip ? "true" : "false", c.eth_ip, c.eth_mask, c.eth_gw, c.eth_dns,
         c.wdt_enable ? "true" : "false", (unsigned)c.wdt_timeout_s);
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, buf, n);
@@ -429,23 +497,34 @@ static esp_err_t h_config_get(httpd_req_t *req)
 // Overlays the current config; saved to NVS, applied on reboot.
 static esp_err_t h_config_post(httpd_req_t *req)
 {
-    char body[400];
+    char body[512];
     read_body(req, body, sizeof(body));
 
     cdc2net_cfg_t c;
     config_load(&c);
 
+    // Presence-aware overlay: only fields actually present in the body are
+    // changed, so each WebUI tile (WiFi / Ethernet / Pipe / System) can POST
+    // just its own subset without clobbering the others.
     char v[24];
     if (json_field(body, "tcp_port", v, sizeof(v)) == 0) {
         int p = atoi(v);
         if (p > 0 && p < 65536) c.tcp_port = (uint16_t)p;
     }
-    c.static_ip = json_field_truthy(body, "static_ip");
+    if (json_field(body, "static_ip", v, sizeof(v)) == 0)
+        c.static_ip = (strncmp(v, "true", 4) == 0 || v[0] == '1');
     json_field(body, "ip",   c.ip,   sizeof(c.ip));
     json_field(body, "mask", c.mask, sizeof(c.mask));
     json_field(body, "gw",   c.gw,   sizeof(c.gw));
     json_field(body, "dns",  c.dns,  sizeof(c.dns));
-    c.wdt_enable = json_field_truthy(body, "wdt_enable");
+    if (json_field(body, "eth_static_ip", v, sizeof(v)) == 0)
+        c.eth_static_ip = (strncmp(v, "true", 4) == 0 || v[0] == '1');
+    json_field(body, "eth_ip",   c.eth_ip,   sizeof(c.eth_ip));
+    json_field(body, "eth_mask", c.eth_mask, sizeof(c.eth_mask));
+    json_field(body, "eth_gw",   c.eth_gw,   sizeof(c.eth_gw));
+    json_field(body, "eth_dns",  c.eth_dns,  sizeof(c.eth_dns));
+    if (json_field(body, "wdt_enable", v, sizeof(v)) == 0)
+        c.wdt_enable = (strncmp(v, "true", 4) == 0 || v[0] == '1');
     if (json_field(body, "wdt_timeout_s", v, sizeof(v)) == 0) {
         int t = atoi(v);
         if (t >= 30) c.wdt_timeout_s = (uint32_t)t;
@@ -453,6 +532,10 @@ static esp_err_t h_config_post(httpd_req_t *req)
 
     if (c.static_ip && (c.ip[0] == '\0' || c.mask[0] == '\0' || c.gw[0] == '\0')) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "static IP needs ip/mask/gw");
+        return ESP_FAIL;
+    }
+    if (c.eth_static_ip && (c.eth_ip[0] == '\0' || c.eth_mask[0] == '\0' || c.eth_gw[0] == '\0')) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "eth static IP needs ip/mask/gw");
         return ESP_FAIL;
     }
     if (config_save(&c) != ESP_OK) {
@@ -472,8 +555,8 @@ static const char *lcsrc_str(uint8_t s) {
 
 static esp_err_t h_serial_get(httpd_req_t *req)
 {
-    source_usb_serial_info_t si;
-    source_usb_get_serial_info(&si);
+    source_serial_info_t si;
+    source_get_serial_info(bridge_get_source(), &si);
     serialcfg_item_t items[SERIALCFG_MAX];
     int nitems = serialcfg_list(items, SERIALCFG_MAX);
 
@@ -531,12 +614,12 @@ static esp_err_t h_serial_post(httpd_req_t *req)
         // upsert apply-live guard below; runs in the httpd task (no sink mutex
         // held), so apply_line_coding's tx_mtx never nests.
         bool reverted = false;
-        source_usb_serial_info_t si;
-        source_usb_get_serial_info(&si);
+        source_serial_info_t si;
+        source_get_serial_info(bridge_get_source(), &si);
         if (si.connected && si.lc_source != 2 && strcmp(si.key, key) == 0) {
             serialcfg_lc_t d = serialcfg_default();
-            reverted = (source_usb_apply_line_coding(d.baud, d.bits, d.parity,
-                                                     d.stop, 0) == ESP_OK);
+            reverted = (source_apply_line_coding(bridge_get_source(), d.baud,
+                                                 d.bits, d.parity, d.stop, 0) == ESP_OK);
         }
         char resp[48];
         int n = snprintf(resp, sizeof(resp), "{\"deleted\":true,\"reverted\":%s}",
@@ -567,11 +650,11 @@ static esp_err_t h_serial_post(httpd_req_t *req)
 
     // Apply now if this is the attached device and no RFC2217 client controls it.
     bool applied = false;
-    source_usb_serial_info_t si;
-    source_usb_get_serial_info(&si);
+    source_serial_info_t si;
+    source_get_serial_info(bridge_get_source(), &si);
     if (si.connected && si.lc_source != 2 && strcmp(si.key, key) == 0)
-        applied = (source_usb_apply_line_coding(lc.baud, lc.bits, lc.parity,
-                                                lc.stop, 1) == ESP_OK);
+        applied = (source_apply_line_coding(bridge_get_source(), lc.baud, lc.bits,
+                                            lc.parity, lc.stop, 1) == ESP_OK);
 
     char resp[64];
     int n = snprintf(resp, sizeof(resp), "{\"saved\":true,\"applied\":%s}",

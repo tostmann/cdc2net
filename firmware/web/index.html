@@ -7,8 +7,8 @@
   :root{
     --fg:#1f2630;--mut:#6b7280;--bg:#eef2f7;--card:#fff;--bd:#dde2ea;
     --ok:#10b981;--warn:#f59e0b;--err:#ef4444;--acc:#0369a1;
-    --c-usb:#3b82f6; --c-net:#06b6d4; --c-pipe:#22c55e;
-    --c-fw:#eab308;  --c-log:#8b5cf6; --c-sys:#64748b;
+    --c-device:#0ea5e9; --c-usb:#3b82f6; --c-net:#06b6d4; --c-pipe:#22c55e;
+    --c-fw:#eab308;  --c-log:#8b5cf6; --c-sys:#64748b; --c-eeprom:#b45309;
   }
   *{box-sizing:border-box}
   body{font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:0;color:var(--fg);
@@ -26,8 +26,8 @@
   .card h2{margin:0 0 10px;font-size:13px;font-weight:600;text-transform:uppercase;
            letter-spacing:.6px;color:var(--accent,var(--acc));display:flex;align-items:center;gap:8px}
   .card h2::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--accent,var(--acc))}
-  .cat-usb{--accent:var(--c-usb)} .cat-net{--accent:var(--c-net)} .cat-pipe{--accent:var(--c-pipe)}
-  .cat-fw{--accent:var(--c-fw)}   .cat-log{--accent:var(--c-log)} .cat-sys{--accent:var(--c-sys)}
+  .cat-device{--accent:var(--c-device)} .cat-usb{--accent:var(--c-usb)} .cat-net{--accent:var(--c-net)} .cat-pipe{--accent:var(--c-pipe)}
+  .cat-fw{--accent:var(--c-fw)}   .cat-log{--accent:var(--c-log)} .cat-sys{--accent:var(--c-sys)} .cat-eeprom{--accent:var(--c-eeprom)}
   table{width:100%;border-collapse:collapse}
   table td{padding:3px 0;vertical-align:top}
   table tr:not(:last-child){border-bottom:1px solid #f1f4f9}
@@ -64,6 +64,8 @@
 
 <div class="grid">
 
+  <div class="card cat-device"><h2>Device</h2><table id="t-device"></table></div>
+
   <div class="card cat-usb"><h2>USB stick</h2><table id="t-usb"></table>
     <details><summary>Serial config (baud)</summary>
       <label><span>Device key</span><input type="text" id="s-key" readonly></label>
@@ -82,38 +84,50 @@
     </details>
   </div>
 
-  <div class="card cat-net"><h2>Network</h2>
-    <table id="t-net"></table>
+  <div class="card cat-net"><h2>WiFi</h2>
+    <table id="t-wifi"></table>
     <details><summary>WiFi setup</summary>
       <div class="btnrow"><button id="b-scan" type="button">Scan</button></div>
       <div class="aps" id="aps"></div>
       <label><span>SSID</span><input type="text" id="w-ssid"></label>
       <label><span>Password</span><input type="password" id="w-pass"></label>
-      <div class="btnrow"><button id="b-wifi" type="button">Save WiFi</button></div>
+      <div class="btnrow">
+        <button id="b-wifi" type="button">Save WiFi</button>
+        <button id="b-forget" type="button" class="danger">Forget WiFi</button>
+      </div>
       <div class="msg" id="m-wifi"></div>
     </details>
-    <details><summary>Network config</summary>
+    <details><summary>IP config (WiFi)</summary>
       <label><input type="checkbox" id="c-static"><span>Static IP</span></label>
       <label><span>IP</span><input type="text" id="c-ip" placeholder="192.168.1.50"></label>
       <label><span>Netmask</span><input type="text" id="c-mask" placeholder="255.255.255.0"></label>
       <label><span>Gateway</span><input type="text" id="c-gw" placeholder="192.168.1.1"></label>
       <label><span>DNS</span><input type="text" id="c-dns" placeholder="192.168.1.1"></label>
-      <label><span>TCP port</span><input type="number" id="c-port" min="1" max="65535"></label>
-      <label><input type="checkbox" id="c-wdt"><span>Reconnect WDT</span></label>
-      <label><span>WDT timeout s</span><input type="number" id="c-wdtto" min="30"></label>
       <div class="btnrow"><button id="b-cfg" type="button">Save &amp; reboot</button></div>
       <div class="msg" id="m-cfg"></div>
     </details>
-    <details><summary>Maintenance</summary>
-      <div class="btnrow">
-        <button id="b-reboot" type="button" class="danger">Reboot</button>
-        <button id="b-forget" type="button" class="danger">Forget WiFi</button>
-      </div>
-      <div class="msg" id="m-maint"></div>
+  </div>
+
+  <div class="card cat-net" id="card-eth" style="display:none"><h2>Ethernet</h2>
+    <table id="t-eth"></table>
+    <details><summary>IP config (Ethernet)</summary>
+      <label><input type="checkbox" id="e-static"><span>Static IP</span></label>
+      <label><span>IP</span><input type="text" id="e-ip" placeholder="192.168.1.51"></label>
+      <label><span>Netmask</span><input type="text" id="e-mask" placeholder="255.255.255.0"></label>
+      <label><span>Gateway</span><input type="text" id="e-gw" placeholder="192.168.1.1"></label>
+      <label><span>DNS</span><input type="text" id="e-dns" placeholder="192.168.1.1"></label>
+      <div class="btnrow"><button id="b-ecfg" type="button">Save &amp; reboot</button></div>
+      <div class="msg" id="m-ecfg"></div>
     </details>
   </div>
 
-  <div class="card cat-pipe"><h2>Pipe</h2><table id="t-pipe"></table></div>
+  <div class="card cat-pipe"><h2>Pipe</h2><table id="t-pipe"></table>
+    <details><summary>Port config</summary>
+      <label><span>TCP port</span><input type="number" id="c-port" min="1" max="65535"></label>
+      <div class="btnrow"><button id="b-port" type="button">Save &amp; reboot</button></div>
+      <div class="msg" id="m-port"></div>
+    </details>
+  </div>
 
   <div class="card cat-fw"><h2>Firmware</h2>
     <table id="t-fw"></table>
@@ -130,7 +144,20 @@
     </details>
   </div>
 
-  <div class="card cat-sys"><h2>System</h2><table id="t-sys"></table></div>
+  <div class="card cat-sys"><h2>System</h2><table id="t-sys"></table>
+    <details><summary>Reconnect watchdog</summary>
+      <label><input type="checkbox" id="c-wdt"><span>Enable WDT</span></label>
+      <label><span>WDT timeout s</span><input type="number" id="c-wdtto" min="30"></label>
+      <div class="btnrow"><button id="b-wdt" type="button">Save &amp; reboot</button></div>
+      <div class="msg" id="m-wdt"></div>
+    </details>
+    <details><summary>Maintenance</summary>
+      <div class="btnrow"><button id="b-reboot" type="button" class="danger">Reboot</button></div>
+      <div class="msg" id="m-maint"></div>
+    </details>
+  </div>
+
+  <div class="card cat-eeprom" id="card-eeprom" style="display:none"><h2>EEPROM</h2><table id="t-eeprom"></table></div>
 
   <div class="card cat-log"><h2>Log</h2><div id="log"></div></div>
 
@@ -162,12 +189,18 @@ async function refresh(){
     ...(u.manuf?[row("Vendor",u.manuf)]:[]),
     row("RX / TX", kb(u.rx)+" / "+kb(u.tx)),
   ]);
-  const n=j.net;
-  fill("t-net",[
-    row("State", n.up?'<span class="on">connected</span>':(n.ap?'<span class="ap">AP mode</span>':'<span class="off">down</span>')),
-    row("IP", n.ip), row("Gateway", n.gw),
-    row("SSID", n.ssid), row("Hostname", n.host+".local"),
+  const w=j.wifi||{}, e=j.eth||{};
+  fill("t-wifi",[
+    row("State", w.up?'<span class="on">connected</span>':(w.ap?'<span class="ap">AP mode</span>':'<span class="off">down</span>')),
+    row("IP", w.ip), row("Gateway", w.gw), row("SSID", w.ssid||"(none)"),
   ]);
+  if(e.present){
+    $("card-eth").style.display="";
+    fill("t-eth",[
+      row("State", e.up?'<span class="on">connected</span>':'<span class="off">link down</span>'),
+      row("IP", e.ip), row("Gateway", e.gw),
+    ]);
+  } else $("card-eth").style.display="none";
   const t=j.tcp, b=j.br;
   fill("t-pipe",[
     row("TCP port", t.port), row("Clients", t.clients),
@@ -176,24 +209,46 @@ async function refresh(){
     row("TX dropped", b.tx_drop),
   ]);
   fill("t-fw",[ row("Version","v"+j.fw.version), row("Built", j.fw.built) ]);
-  const s=j.sys, h=j.health||{};
-  fill("t-sys",[
+  const s=j.sys||{}, h=j.health||{};
+  fill("t-device",[
+    row("Hostname", (w.host||"?")+".local"),
+    row("Chip", (s.chip||"?")+" rev "+(s.chip_rev??"?")),
+    row("MAC", s.mac||"-"),
+    row("Firmware", "v"+j.fw.version+' <span style="color:var(--mut)">'+(j.fw.built||"")+'</span>'),
     row("Uptime", dur(s.uptime_s)),
     row("Heap free/min", kb(s.free_heap)+" / "+kb(s.min_free_heap)),
+    row("Reset reason", s.reset_reason||"?"),
+  ]);
+  fill("t-sys",[
     row("Largest block", kb(s.largest_block)),
-    row("Reset reason", s.reset_reason),
     row("Boots", h.boot_count),
     row("Crashes", h.crash_count>0?'<span class="off">'+h.crash_count+'</span>':h.crash_count),
     row("Conn-WDT reboots", h.wdt_reboots),
     row("Task-WDT", h.wdt_subscribed?'<span class="on">armed</span>':'<span class="off">off</span>'),
   ]);
+  // EEPROM tile — hidden unless the firmware reports the M24C32 RMW backend
+  // present (features.eeprom===true).  On the bridge it stays off.
+  const feat=j.features||{};
+  if(feat.eeprom===true){
+    $("card-eeprom").style.display="";
+    const ee=j.eeprom||{}, EE={0:"absent",1:"present + RMW OK",2:"present, RMW failed"};
+    fill("t-eeprom",[
+      row("State",(EE[ee.state]||"?")+" ("+(ee.state??"?")+")"),
+      row("Size",ee.size!=null?ee.size+" B":"-"),
+      row("Page",ee.page!=null?ee.page+" B":"-"),
+    ]);
+  } else $("card-eeprom").style.display="none";
   // Config form: populate once so the 2.5 s refresh doesn't fight typing.
   if(!cfgInit && j.cfg){
     const c=j.cfg;
     $("c-static").checked=c.static_ip; $("c-ip").value=c.ip; $("c-mask").value=c.mask;
-    $("c-gw").value=c.gw; $("c-dns").value=c.dns; $("c-port").value=c.tcp_port;
+    $("c-gw").value=c.gw; $("c-dns").value=c.dns;
+    $("e-static").checked=c.eth_static_ip; $("e-ip").value=c.eth_ip; $("e-mask").value=c.eth_mask;
+    $("e-gw").value=c.eth_gw; $("e-dns").value=c.eth_dns;
+    $("c-port").value=c.tcp_port;
     $("c-wdt").checked=c.wdt_enable; $("c-wdtto").value=c.wdt_timeout_s;
-    if(!c.ip && n.ip!=="0.0.0.0"){ $("c-ip").placeholder=n.ip; $("c-gw").placeholder=n.gw; }
+    if(!c.ip && w.ip && w.ip!=="0.0.0.0"){ $("c-ip").placeholder=w.ip; $("c-gw").placeholder=w.gw; }
+    if(!c.eth_ip && e.ip && e.ip!=="0.0.0.0"){ $("e-ip").placeholder=e.ip; $("e-gw").placeholder=e.gw; }
     cfgInit=true;
   }
   // Serial config: repopulate the form only when the attached device changes,
@@ -246,21 +301,28 @@ $("b-wifi").onclick=async()=>{
   }catch(e){ msg("m-wifi","error: "+e,"err"); }
 };
 
-$("b-cfg").onclick=async()=>{
-  const o={
-    tcp_port:+$("c-port").value||2329, static_ip:$("c-static").checked,
-    ip:$("c-ip").value.trim(), mask:$("c-mask").value.trim(),
-    gw:$("c-gw").value.trim(), dns:$("c-dns").value.trim(),
-    wdt_enable:$("c-wdt").checked, wdt_timeout_s:+$("c-wdtto").value||300,
-  };
-  if(o.static_ip && (!o.ip||!o.mask||!o.gw)){ msg("m-cfg","static IP needs ip/mask/gw","err"); return; }
-  msg("m-cfg","saving…");
+async function saveReboot(obj,mid){
+  msg(mid,"saving…");
   try{
-    const r=await postJSON("/api/config",o);
-    if(r.ok){ msg("m-cfg","saved — rebooting…","ok"); setTimeout(()=>fetch("/api/reboot",{method:"POST"}),500); }
-    else msg("m-cfg","error: "+await r.text(),"err");
-  }catch(e){ msg("m-cfg","error: "+e,"err"); }
+    const r=await postJSON("/api/config",obj);
+    if(r.ok){ msg(mid,"saved — rebooting…","ok"); setTimeout(()=>fetch("/api/reboot",{method:"POST"}),500); }
+    else msg(mid,"error: "+await r.text(),"err");
+  }catch(e){ msg(mid,"error: "+e,"err"); }
+}
+$("b-cfg").onclick=()=>{
+  const o={static_ip:$("c-static").checked, ip:$("c-ip").value.trim(), mask:$("c-mask").value.trim(),
+           gw:$("c-gw").value.trim(), dns:$("c-dns").value.trim()};
+  if(o.static_ip && (!o.ip||!o.mask||!o.gw)){ msg("m-cfg","static IP needs ip/mask/gw","err"); return; }
+  saveReboot(o,"m-cfg");
 };
+$("b-ecfg").onclick=()=>{
+  const o={eth_static_ip:$("e-static").checked, eth_ip:$("e-ip").value.trim(), eth_mask:$("e-mask").value.trim(),
+           eth_gw:$("e-gw").value.trim(), eth_dns:$("e-dns").value.trim()};
+  if(o.eth_static_ip && (!o.eth_ip||!o.eth_mask||!o.eth_gw)){ msg("m-ecfg","static IP needs ip/mask/gw","err"); return; }
+  saveReboot(o,"m-ecfg");
+};
+$("b-port").onclick=()=>saveReboot({tcp_port:+$("c-port").value||2329},"m-port");
+$("b-wdt").onclick=()=>saveReboot({wdt_enable:$("c-wdt").checked, wdt_timeout_s:+$("c-wdtto").value||300},"m-wdt");
 
 $("b-serial").onclick=async()=>{
   const key=$("s-key").value.trim();
@@ -278,7 +340,7 @@ $("b-serial").onclick=async()=>{
 $("b-reboot").onclick=async()=>{ if(!confirm("Reboot the device?"))return;
   msg("m-maint","rebooting…"); try{await fetch("/api/reboot",{method:"POST"});}catch(e){} };
 $("b-forget").onclick=async()=>{ if(!confirm("Forget WiFi credentials and reboot?"))return;
-  msg("m-maint","forgetting…"); try{await fetch("/api/wifi/reset",{method:"POST"});}catch(e){} };
+  msg("m-wifi","forgetting…"); try{await fetch("/api/wifi/reset",{method:"POST"});}catch(e){} };
 
 $("b-check").onclick=async()=>{
   msg("m-upd","checking…");

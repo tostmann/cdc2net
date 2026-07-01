@@ -20,11 +20,16 @@ extern "C" {
 
 typedef struct {
     uint16_t tcp_port;          // raw-TCP listener port
-    bool     static_ip;         // false = DHCP
+    bool     static_ip;         // WiFi/STA: false = DHCP
     char     ip[16];            // dotted IPv4, only used when static_ip
     char     mask[16];
     char     gw[16];
     char     dns[16];
+    bool     eth_static_ip;     // Ethernet/W5500: false = DHCP
+    char     eth_ip[16];        // dotted IPv4, only used when eth_static_ip
+    char     eth_mask[16];
+    char     eth_gw[16];
+    char     eth_dns[16];
     bool     wdt_enable;        // connectivity watchdog
     uint32_t wdt_timeout_s;     // reboot after this long without an STA IP
 } cdc2net_cfg_t;

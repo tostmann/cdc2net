@@ -49,11 +49,17 @@ esp_err_t ota_check_refresh(void);
 int ota_check_status_json(char *buf, size_t cap);
 
 // Manifest-URL für den Pull.  Default: https://install.busware.de/cdc2net/manifest.json
-// Kann später zur Laufzeit überschreibbar gemacht werden (z.B. NVS-Setting).
+// Per-Build via -D überschreibbar (Test-Server / künftige per-Chip-OTA-Kanäle);
+// später ggf. zur Laufzeit per NVS-Setting.
+#ifndef OTA_CHECK_MANIFEST_URL
 #define OTA_CHECK_MANIFEST_URL "https://install.busware.de/cdc2net/manifest.json"
+#endif
 
 // Firmware image pulled by the HTTPS OTA install (sibling of the manifest).
+// Per-Build via -D überschreibbar (siehe oben).
+#ifndef OTA_FIRMWARE_URL
 #define OTA_FIRMWARE_URL "https://install.busware.de/cdc2net/firmware.bin"
+#endif
 
 // Start a background HTTPS-pull OTA from OTA_FIRMWARE_URL.  Returns ESP_OK if
 // the install task was spawned (not the OTA result); on success the device

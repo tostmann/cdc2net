@@ -13,6 +13,8 @@
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
 #include "esp_https_ota.h"
+#include "esp_app_desc.h"
+#include "esp_ota_ops.h"   // ESP_ERR_OTA_VALIDATE_FAILED
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -26,6 +28,10 @@ static const char *TAG = "ota_check";
 
 #define MAX_RESP_BYTES   2048   // manifest.json ist ~500 B — 2K reicht mit headroom
 #define VER_STR_MAX      24
+#define OTA_INSTALL_TIMEOUT_S 300   // wall-clock cap on the download loop: perform()
+                                    // returns IN_PROGRESS on a read EAGAIN too, so a server
+                                    // that stalls without closing the socket would otherwise
+                                    // spin the loop forever with s_install stuck at "running".
 
 typedef struct {
     ota_check_state_t state;
@@ -210,6 +216,28 @@ esp_err_t ota_check_refresh(void)
 static volatile int s_install = 0;   // 0 idle, 1 running, 2 error
 static char         s_install_err[96];
 
+// Sets the install error + state under s_mtx, so a concurrent /api/update/check
+// poll (ota_check_status_json) can't serialize a torn s_install_err string.
+static void install_set_err(const char *msg)
+{
+    mtx_ensure();
+    ESP_LOGE(TAG, "OTA install failed: %s", msg);
+    xSemaphoreTake(s_mtx, portMAX_DELAY);
+    snprintf(s_install_err, sizeof(s_install_err), "%s", msg);
+    s_install = 2;
+    xSemaphoreGive(s_mtx);
+}
+
+// Cross-flash guard.  IDF's esp_https_ota_perform() already runs
+// esp_ota_verify_chip_id() on the first chunk → a wrong-CHIP image (C3/C6 onto
+// an S3 or vice versa) returns ESP_ERR_INVALID_VERSION *before* any flash
+// write, so it can never brick: the boot partition is left untouched and the
+// device keeps running the old firmware.  What IDF does NOT check is
+// project_name, so a *different app for the same chip* would otherwise install.
+// We therefore use the granular API to (1) reject a foreign project_name up
+// front and (2) surface a chip/rev mismatch as a clear, distinct error instead
+// of a bare error code.  Teardown follows the IDF advanced_https_ota example:
+// esp_https_ota_abort() on every pre-finish failure; never abort after finish().
 static void ota_install_task(void *arg)
 {
     (void)arg;
@@ -221,30 +249,98 @@ static void ota_install_task(void *arg)
         .keep_alive_enable = true,
     };
     esp_https_ota_config_t ota = { .http_config = &http };
-    esp_err_t e = esp_https_ota(&ota);   // download + flash + set_boot
-    if (e == ESP_OK) {
-        ESP_LOGW(TAG, "OTA install OK — rebooting in 500 ms");
-        vTaskDelay(pdMS_TO_TICKS(500));
-        esp_restart();
+
+    esp_https_ota_handle_t h = NULL;
+    esp_err_t e = esp_https_ota_begin(&ota, &h);
+    if (e != ESP_OK || h == NULL) {
+        install_set_err(esp_err_to_name(e));
+        vTaskDelete(NULL);
+        return;
     }
-    snprintf(s_install_err, sizeof(s_install_err), "%s", esp_err_to_name(e));
-    ESP_LOGE(TAG, "OTA install failed: %s", s_install_err);
-    s_install = 2;
-    vTaskDelete(NULL);
+
+    // Guard 1 — project_name must match our own running firmware.  Reading the
+    // descriptor does not write flash, so an abort here costs nothing.
+    esp_app_desc_t img = {0};
+    e = esp_https_ota_get_img_desc(h, &img);
+    if (e != ESP_OK) {
+        esp_https_ota_abort(h);
+        install_set_err("image header unreadable");
+        vTaskDelete(NULL);
+        return;
+    }
+    const esp_app_desc_t *self = esp_app_get_description();
+    if (strncmp(img.project_name, self->project_name, sizeof(img.project_name)) != 0) {
+        char m[96];
+        // project_name[] is not guaranteed NUL-terminated → bound the prints.
+        snprintf(m, sizeof(m), "foreign image '%.*s' (expected '%.*s')",
+                 (int)sizeof(img.project_name), img.project_name,
+                 (int)sizeof(self->project_name), self->project_name);
+        ESP_LOGE(TAG, "OTA reject: %s", m);
+        esp_https_ota_abort(h);
+        install_set_err(m);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    // Download loop.  The first perform() runs IDF's chip_id + chip_rev verify;
+    // a wrong-chip image aborts here (ESP_ERR_INVALID_VERSION) with nothing
+    // committed to the boot partition.  Bounded by a wall-clock deadline because
+    // perform() returns IN_PROGRESS on a read timeout (EAGAIN) too.
+    const int64_t deadline = esp_timer_get_time() + (int64_t)OTA_INSTALL_TIMEOUT_S * 1000000;
+    while ((e = esp_https_ota_perform(h)) == ESP_ERR_HTTPS_OTA_IN_PROGRESS) {
+        if (esp_timer_get_time() > deadline) { e = ESP_ERR_TIMEOUT; break; }
+        /* streaming the image to the passive OTA partition */
+    }
+    if (e != ESP_OK) {
+        esp_https_ota_abort(h);
+        const char *msg;
+        if (e == ESP_ERR_INVALID_VERSION)   // chip_id OR chip_revision mismatch
+            msg = "incompatible image (chip_id or chip_revision mismatch)";
+        else if (e == ESP_ERR_TIMEOUT)
+            msg = "download stalled (timed out)";
+        else
+            msg = esp_err_to_name(e);
+        install_set_err(msg);
+        vTaskDelete(NULL);
+        return;
+    }
+    if (!esp_https_ota_is_complete_data_received(h)) {
+        esp_https_ota_abort(h);
+        install_set_err("incomplete download");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    // finish() does the final full-image validation + sets the boot partition.
+    // It consumes the handle → do NOT call abort after this point.
+    e = esp_https_ota_finish(h);
+    if (e != ESP_OK) {
+        install_set_err(e == ESP_ERR_OTA_VALIDATE_FAILED
+                            ? "image validation failed (corrupt)"
+                            : esp_err_to_name(e));
+        vTaskDelete(NULL);
+        return;
+    }
+
+    ESP_LOGW(TAG, "OTA install OK — rebooting in 500 ms");
+    vTaskDelay(pdMS_TO_TICKS(500));
+    esp_restart();
 }
 
-// Spawn the install in the background.  Returns ESP_OK if started.  The URL
-// is our own release server, so esp_https_ota's image validation (magic +
-// secure-version) is relied upon; project_name is not separately checked.
+// Spawn the install in the background.  Returns ESP_OK if started.  Pulls our
+// own release server; ota_install_task guards project_name and relies on IDF's
+// chip_id verify, so a cross-chip image can never be committed to boot.
 esp_err_t ota_install_start(void)
 {
-    if (s_install == 1) return ESP_ERR_INVALID_STATE;   // already running
+    mtx_ensure();
+    if (s_install == 1) return ESP_ERR_INVALID_STATE;   // already running (single web task)
+    xSemaphoreTake(s_mtx, portMAX_DELAY);
     s_install_err[0] = '\0';
     s_install = 1;
+    xSemaphoreGive(s_mtx);
     BaseType_t r = xTaskCreate(ota_install_task, "ota_install", 8192, NULL, 5, NULL);
     if (r != pdPASS) {
-        s_install = 2;
-        snprintf(s_install_err, sizeof(s_install_err), "task spawn failed");
+        install_set_err("task spawn failed");
         return ESP_ERR_NO_MEM;
     }
     return ESP_OK;
@@ -268,6 +364,9 @@ int ota_check_status_json(char *buf, size_t cap)
 
     xSemaphoreTake(s_mtx, portMAX_DELAY);
     ota_state_t snap = s_state;
+    int  install_snap = s_install;
+    char install_err_snap[sizeof(s_install_err)];
+    memcpy(install_err_snap, s_install_err, sizeof(s_install_err));
     xSemaphoreGive(s_mtx);
 
     int age_s = -1;
@@ -291,8 +390,8 @@ int ota_check_status_json(char *buf, size_t cap)
         (snap.state == OTA_CHECK_AVAILABLE) ? "true" : "false",
         age_s,
         snap.error,
-        s_install == 1 ? "running" : s_install == 2 ? "error" : "idle",
-        s_install_err);
+        install_snap == 1 ? "running" : install_snap == 2 ? "error" : "idle",
+        install_err_snap);
 
     return (n < 0 || (size_t)n >= cap) ? -1 : n;
 }

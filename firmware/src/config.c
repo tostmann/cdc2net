@@ -29,6 +29,11 @@ void config_load(cdc2net_cfg_t *out)
     sz = sizeof(out->mask); nvs_get_str(h, "mask", out->mask, &sz);
     sz = sizeof(out->gw);   nvs_get_str(h, "gw",   out->gw,   &sz);
     sz = sizeof(out->dns);  nvs_get_str(h, "dns",  out->dns,  &sz);
+    if (nvs_get_u8 (h, "eth_static", &u8) == ESP_OK)       out->eth_static_ip = (u8 != 0);
+    sz = sizeof(out->eth_ip);   nvs_get_str(h, "eth_ip",   out->eth_ip,   &sz);
+    sz = sizeof(out->eth_mask); nvs_get_str(h, "eth_mask", out->eth_mask, &sz);
+    sz = sizeof(out->eth_gw);   nvs_get_str(h, "eth_gw",   out->eth_gw,   &sz);
+    sz = sizeof(out->eth_dns);  nvs_get_str(h, "eth_dns",  out->eth_dns,  &sz);
     if (nvs_get_u8 (h, "wdt_en", &u8)  == ESP_OK)          out->wdt_enable = (u8 != 0);
     if (nvs_get_u32(h, "wdt_to", &u32) == ESP_OK && u32)   out->wdt_timeout_s = u32;
 
@@ -48,6 +53,11 @@ esp_err_t config_save(const cdc2net_cfg_t *cfg)
     if (err == ESP_OK) err = nvs_set_str(h, "mask", cfg->mask);
     if (err == ESP_OK) err = nvs_set_str(h, "gw",   cfg->gw);
     if (err == ESP_OK) err = nvs_set_str(h, "dns",  cfg->dns);
+    if (err == ESP_OK) err = nvs_set_u8 (h, "eth_static", cfg->eth_static_ip ? 1 : 0);
+    if (err == ESP_OK) err = nvs_set_str(h, "eth_ip",   cfg->eth_ip);
+    if (err == ESP_OK) err = nvs_set_str(h, "eth_mask", cfg->eth_mask);
+    if (err == ESP_OK) err = nvs_set_str(h, "eth_gw",   cfg->eth_gw);
+    if (err == ESP_OK) err = nvs_set_str(h, "eth_dns",  cfg->eth_dns);
     if (err == ESP_OK) err = nvs_set_u8 (h, "wdt_en", cfg->wdt_enable ? 1 : 0);
     if (err == ESP_OK) err = nvs_set_u32(h, "wdt_to", cfg->wdt_timeout_s);
     if (err == ESP_OK) err = nvs_commit(h);

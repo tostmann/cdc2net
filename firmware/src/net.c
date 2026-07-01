@@ -10,6 +10,9 @@
 #include "nvs.h"
 #include "config.h"
 #include "health.h"
+#if defined(CONFIG_CDC2NET_ETH_W5500)
+#include "net_eth.h"          // W5500 SPI ethernet (line-wide; FPC add-on)
+#endif
 #include "esp_timer.h"
 #include "esp_system.h"
 #include "lwip/inet.h"
@@ -258,6 +261,13 @@ esp_err_t net_init(void)
         xTaskCreate(deferred_ap_fallback_task, "ap_fallback", 3072, NULL, 4, NULL);
     }
 
+#if defined(CONFIG_CDC2NET_ETH_W5500)
+    // W5500 SPI ethernet (line-wide on the C6 EUL/TUL generation).  Independent
+    // of WiFi: brings up its own netif; an absent W5500 is logged + skipped.
+    // The TCP listener binds INADDR_ANY, so it serves over whichever iface is up.
+    net_eth_init();
+#endif
+
     if (s_cfg.wdt_enable) {
         xTaskCreate(net_wdt_task, "net_wdt", 3072, NULL, 4, NULL);
         ESP_LOGW(TAG, "connectivity watchdog armed: reboot after %us offline",
@@ -288,7 +298,14 @@ static void net_wdt_task(void *arg)
     const int64_t to_us = (int64_t)s_cfg.wdt_timeout_s * 1000000;
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(10000));
-        if (s_connected || s_ap_clients > 0 || s_ssid_buf[0] == '\0') {
+        // net_is_connected() (not bare s_connected) so a W5500 ETH uplink
+        // counts as "reachable" — matching the net_start_softap() ETH guard.
+        // Without this, a C6+ETH unit with stale WiFi creds + the opt-in WDT
+        // would reboot-loop every timeout: the guard suppresses the SoftAP
+        // (s_ap_clients stays 0) and s_connected is false while s_ssid_buf is
+        // non-empty, so no pause condition would hold despite healthy ethernet.
+        // On S3/C3 (no ETH) net_is_connected() reduces to s_connected → identical.
+        if (net_is_connected() || s_ap_clients > 0 || s_ssid_buf[0] == '\0') {
             s_last_conn_us = esp_timer_get_time();
             continue;
         }
@@ -334,15 +351,26 @@ static void deferred_ap_fallback_task(void *arg)
     // nicht: AP-Fallback hochziehen, damit der User über die Captive-
     // SSID an die WebUI rankommt.
     vTaskDelay(pdMS_TO_TICKS(130000));
-    if (!s_connected && !s_ap_active) {
+    // net_is_connected() (not s_connected) so a wired W5500 uplink counts —
+    // otherwise a C6 with ETH up but no WiFi creds would raise a pointless
+    // captive AP here.  (net_start_softap() also guards on ETH as a backstop.)
+    if (!net_is_connected() && !s_ap_active) {
         ESP_LOGW(TAG, "deferred AP fallback fires — Improv produced no connection");
         net_start_softap();
     }
     vTaskDelete(NULL);
 }
 
-bool net_is_connected(void)        { return s_connected; }
+bool net_is_connected(void)        {
+#if defined(CONFIG_CDC2NET_ETH_W5500)
+    if (net_eth_is_up()) return true;
+#endif
+    return s_connected;
+}
 const char *net_ip_str(void)       {
+#if defined(CONFIG_CDC2NET_ETH_W5500)
+    if (net_eth_is_up()) return net_eth_ip_str();
+#endif
     if (s_ap_active && !s_connected) return "192.168.4.1";
     return s_ip_buf;
 }
@@ -351,7 +379,19 @@ const char *net_ssid(void)         {
     return s_ssid_buf[0] ? s_ssid_buf : "(none)";
 }
 const char *net_hostname(void)     { compute_names(); return s_host_buf; }
-const char *net_gw_str(void)       { return s_gw_buf; }
+const char *net_gw_str(void)       {
+#if defined(CONFIG_CDC2NET_ETH_W5500)
+    if (net_eth_is_up()) return net_eth_gw_str();
+#endif
+    return s_gw_buf;
+}
+// WiFi/STA-specific (always the STA side, regardless of an active ETH bearer).
+bool net_wifi_connected(void)      { return s_connected; }
+const char *net_wifi_ip_str(void)  {
+    if (s_ap_active && !s_connected) return "192.168.4.1";
+    return s_ip_buf;
+}
+const char *net_wifi_gw_str(void)  { return s_gw_buf; }
 bool net_is_ap_mode(void)          { return s_ap_active; }
 const char *net_ap_ssid(void)      { compute_names(); return s_ap_ssid; }
 
@@ -430,6 +470,22 @@ bool net_has_creds(void)
 esp_err_t net_start_softap(void)
 {
     if (s_ap_active) return ESP_OK;
+
+#if defined(CONFIG_CDC2NET_ETH_W5500)
+    // On the W5500 (EUL/TUL C6) generation the wired link is the primary
+    // uplink and is up within seconds of boot.  If ETH already gives us
+    // connectivity, a WiFi captive-onboarding SoftAP is pointless noise —
+    // the WebUI is reachable over ethernet.  Suppress it.  (This is the
+    // single chokepoint for *all* SoftAP triggers: the deferred no-creds
+    // fallback AND the post-retry STA-give-up path both land here.)
+    // Known residual: a W5500 link that only comes up AFTER a SoftAP was
+    // already raised won't auto-tear-down — acceptable, ETH is present at
+    // boot on this generation.
+    if (net_eth_is_up()) {
+        ESP_LOGI(TAG, "ETH link up — skipping captive SoftAP (reachable via ethernet)");
+        return ESP_OK;
+    }
+#endif
 
     compute_names();
     ESP_LOGW(TAG, "starting captive AP '%s' (192.168.4.1)", s_ap_ssid);

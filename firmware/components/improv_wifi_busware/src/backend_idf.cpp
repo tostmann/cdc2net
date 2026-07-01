@@ -92,7 +92,13 @@ void EspIdfWiFiBackend::onWifiEvent_(int32_t id, void* data) {
             if (connecting_) connectFailed_ = true;
             break;
         case WIFI_EVENT_SCAN_DONE: {
-            scanRunning_ = false;
+            // The SCAN_DONE event is broadcast to EVERY registered WIFI_EVENT
+            // handler, and esp_wifi_scan_get_ap_records() FREES the AP list.
+            // So we must only consume scans WE started — otherwise a scan
+            // triggered elsewhere (the WebUI's net_scan) finds its list already
+            // freed here and gets 0 results.  exchange(false): consume iff we
+            // were the initiator (startScan set scanRunning_ = true).
+            if (!scanRunning_.exchange(false)) break;
             uint16_t apCount = 0;
             if (esp_wifi_scan_get_ap_num(&apCount) == ESP_OK && apCount > 0) {
                 scanCache_.assign(apCount, {});
