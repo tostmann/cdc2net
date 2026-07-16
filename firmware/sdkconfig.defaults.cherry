@@ -1,0 +1,24 @@
+# env:cherry — CherryUSB host stack instead of esp-usb (see [env:cherry] in
+# platformio.ini).  Appended AFTER sdkconfig.defaults + sdkconfig.defaults.esp32s3
+# via SDKCONFIG_DEFAULTS (board_build.cmake_extra_args), so the source choice
+# below overrides the esp32s3 overlay's CONFIG_CDC2NET_SOURCE_USB=y.
+#
+# These are exactly the values the bench-verified build ran with (diff of the
+# generated sdkconfig.cherry against sdkconfig.cdc2net) — without this block the
+# cherryusb component compiles no sources and the link fails with
+# "undefined reference to usbh_serial_*".
+CONFIG_CDC2NET_SOURCE_USB=n
+CONFIG_CDC2NET_SOURCE_USB_CHERRY=y
+CONFIG_CHERRYUSB=y
+CONFIG_CHERRYUSB_HOST=y
+CONFIG_CHERRYUSB_HOST_DWC2_ESP=y
+CONFIG_CHERRYUSB_HOST_CDC_ACM=y
+CONFIG_CHERRYUSB_HOST_FTDI=y
+CONFIG_CHERRYUSB_HOST_CH34X=y
+CONFIG_CHERRYUSB_HOST_CP210X=y
+CONFIG_USBHOST_SERIAL=y
+CONFIG_USBHOST_PSC_PRIO=0
+CONFIG_USBHOST_PSC_STACKSIZE=4096
+CONFIG_USBHOST_REQUEST_BUFFER_LEN=512
+CONFIG_USBHOST_CONTROL_TRANSFER_TIMEOUT=500
+CONFIG_USBHOST_SERIAL_RX_SIZE=2048

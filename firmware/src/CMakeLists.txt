@@ -26,9 +26,19 @@ if(CONFIG_CDC2NET_SOURCE_USB)
     #     USB-serial bridges — FTDI status-byte strip + baud control.  These
     #     vendored components must self-target-guard (USB-OTG = S2/S3/P4 only)
     #     before a non-OTG mission builds — see docs/merge-targets.md §3.2.
-    list(APPEND cdc2net_srcs "source_usb.c")
+    list(APPEND cdc2net_srcs "source_usb.c" "hubprobe.c")
     list(APPEND cdc2net_reqs usb usb_host_cdc_acm
                  usb_host_ftdi_vcp usb_host_ch34x_vcp usb_host_cp210x_vcp)
+endif()
+
+if(CONFIG_CDC2NET_SOURCE_USB_CHERRY)
+    # Same source contract as source_usb.c, on the CherryUSB stack: it brings
+    # its own CDC-ACM/FTDI/CH34x/CP210x class drivers, so none of the vendored
+    # *_vcp components (nor esp-usb's cdc_acm) are built on this path.  The
+    # component itself is pulled from the registry (idf_component.yml) rather
+    # than vendored — upstream is ~100 MB.
+    list(APPEND cdc2net_srcs "source_usb_cherry.c")
+    list(APPEND cdc2net_reqs cherryusb)
 endif()
 
 if(CONFIG_CDC2NET_SOURCE_UART)

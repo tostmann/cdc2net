@@ -67,3 +67,6 @@ schematics/
 datasheets/
 datasheet/
 .claude/
+
+# S31 lab artifacts (bringup images, factory backup) — local only, never public
+s31-*/

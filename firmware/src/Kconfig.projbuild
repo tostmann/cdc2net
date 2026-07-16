@@ -18,6 +18,19 @@ config CDC2NET_SOURCE_USB
         USB-serial bridge through its VCP driver (chip framing + baud).
         Requires a USB-OTG-capable SoC (ESP32-S2 / S3 / P4).
 
+config CDC2NET_SOURCE_USB_CHERRY
+    bool "USB host via CherryUSB (CDC-ACM + FTDI/CH34x/CP210x built in)"
+    help
+        Same bridge source as CDC2NET_SOURCE_USB, but on the CherryUSB host
+        stack instead of espressif/usb.  Pick this when the root port runs at
+        high speed and full-speed sticks sit behind a hub: esp-usb has no
+        transaction-translator support and rejects them outright, CherryUSB
+        implements split transactions.  Mandatory on ESP32-S31 (UTMI-only PHY
+        -> the root port is always high speed); optional on S2/S3, where the
+        full-speed root port makes a hub fall back to FS and TT never applies.
+        Ships CDC-ACM/FTDI/CH34x/CP210x class drivers itself, so the three
+        vendored *_vcp components are not built on this path.
+
 config CDC2NET_SOURCE_UART
     bool "Onboard radio over hardware UART (EUL/TUL serial downlink)"
     help

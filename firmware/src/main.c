@@ -18,6 +18,7 @@
 #include "esp_system.h"
 #include "esp_heap_caps.h"
 #include "esp_task_wdt.h"
+#include "nvs_flash.h"
 
 #include "version.h"
 #include "bridge.h"
@@ -25,7 +26,9 @@
 // Source selection (Kconfig choice CDC2NET_SOURCE_*).  v0.1 ships USB only; the
 // UART (EUL/TUL serial downlink) and Thread/RCP sources slot in here as extra
 // #elif branches when their missions land (see docs/merge-targets.md).
-#if defined(CONFIG_CDC2NET_SOURCE_USB)
+// Both USB options implement the same source_usb.h contract (source_usb_init);
+// the Kconfig choice decides which .c is compiled — esp-usb or CherryUSB.
+#if defined(CONFIG_CDC2NET_SOURCE_USB) || defined(CONFIG_CDC2NET_SOURCE_USB_CHERRY)
 #include "source_usb.h"
 #elif defined(CONFIG_CDC2NET_SOURCE_UART)
 #include "source_uart.h"
@@ -40,6 +43,9 @@
 #include "webui.h"
 #include "config.h"
 #include "health.h"
+#ifdef CDC2NET_HUBPROBE
+#include "hubprobe.h"     // THROWAWAY USB-host channel-budget probe (env:hubprobe)
+#endif
 #if defined(CONFIG_CDC2NET_EEPROM_M24C32)
 #include "eeprom_m24c32.h"   // M24C32 config-EEPROM boot self-test (C6 EUL carrier)
 #endif
@@ -53,6 +59,11 @@ static source_t *s_src;
 
 void app_main(void)
 {
+#ifdef CDC2NET_HUBPROBE
+    // Throwaway probe: bring up USB host + hub support ONLY, no WiFi/bridge/UI.
+    hubprobe_run();
+    return;
+#endif
     // Log-tee FIRST so the banner + all ESP_LOG lines land in the ring
     // buffer that /api/log serves.
     log_buffer_init();
@@ -63,6 +74,8 @@ void app_main(void)
     printf("  built     %s\n", FW_BUILD_DATE);
 #if defined(CONFIG_CDC2NET_SOURCE_USB)
     printf("  source    USB-Host-CDC (CUL/TUL/EUL + FTDI/CH34x/CP210x)\n");
+#elif defined(CONFIG_CDC2NET_SOURCE_USB_CHERRY)
+    printf("  source    USB-Host-CDC via CherryUSB (CUL/TUL/EUL + FTDI/CH34x/CP210x)\n");
 #elif defined(CONFIG_CDC2NET_SOURCE_UART)
     printf("  source    onboard radio over UART (EUL/TUL serial downlink)\n");
 #endif
@@ -70,9 +83,27 @@ void app_main(void)
     printf("=================================================\n");
     ESP_LOGW(TAG, "boot: reset_reason=%d", (int)esp_reset_reason());
 
+    // NVS must be up BEFORE any source can open a device.  The USB source
+    // resolves its per-device line coding through serialcfg_lookup() ->
+    // nvs_open() as soon as a stick enumerates (~1 s), which is well before
+    // net_init() runs (it sits behind the 3 s USB settle below) and used to be
+    // the first thing to call nvs_flash_init().  nvs_open() on uninitialised
+    // NVS just fails, and the lookup silently degrades to the compiled-in
+    // default — so a stick configured to e.g. 19200 8E1 came back up at
+    // 115200 8N1 after every reboot, and only a live WebUI POST fixed it until
+    // the next one.  nvs_flash_init() is idempotent, so net_init()'s own call
+    // (which also owns the erase-and-retry recovery) still behaves as before.
+    esp_err_t nerr = nvs_flash_init();
+    if (nerr == ESP_ERR_NVS_NO_FREE_PAGES || nerr == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ESP_ERROR_CHECK(nvs_flash_init());
+    } else if (nerr != ESP_OK) {
+        ESP_ERROR_CHECK(nerr);
+    }
+
     // Bridge + source first (USB host before WiFi PHY — #15079 ordering).
     bridge_init();
-#if defined(CONFIG_CDC2NET_SOURCE_USB)
+#if defined(CONFIG_CDC2NET_SOURCE_USB) || defined(CONFIG_CDC2NET_SOURCE_USB_CHERRY)
     s_src = source_usb_init();
 #elif defined(CONFIG_CDC2NET_SOURCE_UART)
     s_src = source_uart_init();
