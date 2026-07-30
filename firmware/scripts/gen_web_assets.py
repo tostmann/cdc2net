@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate firmware/src/web_assets.h from firmware/web/index.html.
+"""Regenerate firmware/main/web_assets.h from firmware/web/index.html.
 
 Embeds the gzip of the single-page UI as a C array, served with
 Content-Encoding: gzip.  This avoids PlatformIO's flaky EMBED_FILES/.S
@@ -12,12 +12,15 @@ Atomic write + gzip roundtrip validation (NFS-safe, mtime=0 deterministic).
 """
 import gzip
 import os
+import re
+import subprocess
+import tempfile
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)                       # firmware/
 SRC  = os.path.join(ROOT, "web", "index.html")
-OUT  = os.path.join(ROOT, "src", "web_assets.h")
+OUT  = os.path.join(ROOT, "main", "web_assets.h")
 
 
 def _read_text_source_nfs(path, markers=(b"<html", b"</html>"), retries=6):
@@ -57,8 +60,39 @@ def _read_text_source_nfs(path, markers=(b"<html", b"</html>"), retries=6):
         % (path, retries, last.count(bytes(1)), len(last)))
 
 
+def _check_js_syntax(html):
+    """Pflicht-Gate: alle <script>-Bloecke durch `node --check` jagen, BEVOR
+    irgendetwas embedded wird. Ein Syntaxfehler im Page-JS killt beim Laden das
+    GESAMTE Script — die Kacheln bleiben dann leer, und das faellt erst im
+    Browser auf (Vorfall 2026-07-30: doppeltes `const h` im selben Scope,
+    dynamischer Header-Titel vs. j.health — eine Firmware lang unbemerkt
+    ausgeliefert). node fehlt = Abbruch, nicht Warnung: ein Gate, das still
+    uebersprungen wird, ist keins."""
+    js = "\n".join(re.findall(r"<script>(.*?)</script>", html, re.S))
+    if not js.strip():
+        raise RuntimeError("[js-gate] kein <script>-Block in index.html gefunden — "
+                           "Quelle kaputt?")
+    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+        f.write(js)
+        tmp = f.name
+    try:
+        r = subprocess.run(["node", "--check", tmp],
+                           capture_output=True, text=True)
+    except FileNotFoundError:
+        os.unlink(tmp)
+        raise RuntimeError("[js-gate] `node` nicht gefunden — das Syntax-Gate ist "
+                           "Pflicht. node installieren oder auf einem Host mit "
+                           "node generieren.")
+    os.unlink(tmp)
+    if r.returncode != 0:
+        raise RuntimeError("[js-gate] SyntaxError im Page-JS — web_assets.h NICHT "
+                           "regeneriert:\n" + r.stderr.strip())
+    print("[js-gate] node --check: Page-JS syntaktisch OK")
+
+
 def main():
     html = _read_text_source_nfs(SRC).decode("utf-8")
+    _check_js_syntax(html)
     # Splice the busware logo (base64 PNG) into the data: URL placeholder so
     # the 26 KB blob isn't hand-edited in the HTML source.
     logo = _read_text_source_nfs(

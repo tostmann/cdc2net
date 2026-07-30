@@ -1,0 +1,129 @@
+--- a/class/hub/usbh_hub.c
++++ b/class/hub/usbh_hub.c
+@@ -2,6 +2,10 @@
+  * Copyright (c) 2022, sakumisu
+  *
+  * SPDX-License-Identifier: Apache-2.0
++ *
++ * Modified 2026 for CDC2NET: external-hub status-poll re-arm and boot
++ * rescan.  See ../../VENDORING.md and
++ * ../../patches/0001-hub-boot-rescan.patch for the change and why.
+  */
+ #include "usbh_core.h"
+ #include "usbh_hub.h"
+@@ -314,6 +318,16 @@
+         USB_LOG_DBG("Restart timer\r\n");
+         usb_osal_timer_start(hub->int_timer);
+     } else {
++        /* Any other completion (transfer error, timeout, zero-length) used to end the
++         * status poll for good: the timer is one-shot and nothing re-armed it, so the
++         * hub was never polled again and pending change bits stayed uncollected.
++         * This runs in the USB interrupt, so only count it here - logging from an ISR
++         * is not safe. The counter is reported from the hub thread below.
++         */
++        hub->poll_err_count++;
++        if (hub->connected) {
++            usb_osal_timer_start(hub->int_timer);
++        }
+     }
+ }
+ 
+@@ -329,6 +343,7 @@
+ {
+     struct usb_endpoint_descriptor *ep_desc;
+     struct hub_port_status port_status;
++    uint16_t initial_mask = 0;
+     int ret;
+ 
+     struct usbh_hub *hub = usbh_hub_class_alloc();
+@@ -422,11 +437,20 @@
+ 
+     for (uint8_t port = 0; port < hub->nports; port++) {
+         ret = usbh_hub_get_portstatus(hub, port + 1, &port_status);
+-        USB_LOG_DBG("port %u, status:0x%03x, change:0x%02x\r\n", port + 1, port_status.wPortStatus, port_status.wPortChange);
+         if (ret < 0) {
+             return ret;
+         }
++        USB_LOG_INFO("Hub attach: port %u status:0x%04x change:0x%04x\r\n", port + 1, port_status.wPortStatus, port_status.wPortChange);
++        /* Any port that is already occupied when the hub attaches gets enumerated by a
++         * one-shot scan below. Relying on the status-change event alone is not enough:
++         * after an MCU reset the hub keeps its port state, and a pending change bit is
++         * only collected if the status poll is actually running.
++         */
++        if (port_status.wPortStatus & HUB_PORT_STATUS_CONNECTION) {
++            initial_mask |= (1 << (port + 1));
++        }
+     }
++    hub->initial_scan_mask = initial_mask;
+ 
+     hub->connected = true;
+     snprintf(hport->config.intf[intf].devname, CONFIG_USBHOST_DEV_NAMELEN, DEV_FORMAT, hub->index);
+@@ -441,6 +465,11 @@
+         return -USB_ERR_NOMEM;
+     }
+     usb_osal_timer_start(hub->int_timer);
++
++    if (initial_mask) {
++        USB_LOG_INFO("Hub attach: port mask 0x%04x already occupied, forcing initial scan\r\n", initial_mask);
++        usbh_hub_thread_wakeup(hub);
++    }
+     return 0;
+ }
+ 
+@@ -481,6 +510,7 @@
+     struct usbh_hubport *child;
+     struct hub_port_status port_status;
+     uint16_t portchange_index;
++    uint16_t initial_mask;
+     uint16_t portstatus;
+     uint16_t portchange;
+     uint16_t mask;
+@@ -497,8 +527,16 @@
+ 
+     flags = usb_osal_enter_critical_section();
+     memcpy(&portchange_index, hub->int_buffer, 2);
++    initial_mask = hub->initial_scan_mask;
++    hub->initial_scan_mask = 0;
+     usb_osal_leave_critical_section(flags);
+ 
++    portchange_index |= initial_mask;
++
++    if (hub->poll_err_count) {
++        USB_LOG_INFO("Hub status poll: %u failed completions so far\r\n", (unsigned int)hub->poll_err_count);
++    }
++
+     for (uint8_t port = 0; port < hub->nports; port++) {
+         USB_LOG_DBG("Port change:0x%02x\r\n", portchange_index);
+ 
+@@ -539,7 +577,8 @@
+         portchange = port_status.wPortChange;
+ 
+         /* Second, if port changes, debounces first */
+-        if (portchange & HUB_PORT_STATUS_C_CONNECTION) {
++        if ((portchange & HUB_PORT_STATUS_C_CONNECTION) ||
++            ((initial_mask & (1 << (port + 1))) && (portstatus & HUB_PORT_STATUS_CONNECTION))) {
+             uint16_t connection = 0;
+             uint16_t debouncestable = 0;
+             for (uint32_t debouncetime = 0; debouncetime < HUB_DEBOUNCE_TIMEOUT; debouncetime += HUB_DEBOUNCE_STEP) {
+--- a/core/usbh_core.h
++++ b/core/usbh_core.h
+@@ -2,6 +2,10 @@
+  * Copyright (c) 2022, sakumisu
+  *
+  * SPDX-License-Identifier: Apache-2.0
++ *
++ * Modified 2026 for CDC2NET: external-hub status-poll re-arm and boot
++ * rescan.  See ../../VENDORING.md and
++ * ../../patches/0001-hub-boot-rescan.patch for the change and why.
+  */
+ #ifndef USBH_CORE_H
+ #define USBH_CORE_H
+@@ -175,6 +179,8 @@
+     struct usbh_urb intin_urb;
+     uint8_t *int_buffer;
+     struct usb_osal_timer *int_timer;
++    uint16_t initial_scan_mask; /* ports already occupied when this hub attached (no C_CONNECTION) */
++    uint32_t poll_err_count;    /* status-poll completions that were neither data nor NAK */
+ };
+ 
+ struct usbh_devaddr_map {

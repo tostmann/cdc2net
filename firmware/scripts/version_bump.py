@@ -7,7 +7,7 @@ For every `pio run` invocation:
      records the *previous* build number — i.e. the commit represents
      "what was about to be rebuilt".
   2. Increment `build_number.txt` (relative to firmware/).
-  3. Regenerate `src/version.h` with `MAJOR.MINOR.BUILD` and timestamp.
+  3. Regenerate `main/version.h` with `MAJOR.MINOR.BUILD` and timestamp.
      The header is included by main.c for the runtime banner.
 
 Manual fields:
@@ -32,7 +32,7 @@ Import("env")  # noqa: F821 — injected by PlatformIO
 PROJECT_DIR  = env["PROJECT_DIR"]                                      # noqa: F821
 VERSION_FILE = os.path.join(PROJECT_DIR, "version.txt")
 BUILD_FILE   = os.path.join(PROJECT_DIR, "build_number.txt")
-HEADER_FILE  = os.path.join(PROJECT_DIR, "src", "version.h")
+HEADER_FILE  = os.path.join(PROJECT_DIR, "main", "version.h")
 
 
 def _read_version():

@@ -1,0 +1,100 @@
+menu "CDC2NET"
+
+choice CDC2NET_SOURCE
+    prompt "Bridge data source"
+    default CDC2NET_SOURCE_USB
+    help
+        Selects the single data source the bridge fans out to the TCP sink(s).
+        Each board/mission builds exactly ONE source (see docs/merge-targets.md
+        for the Board x Mission matrix).  v0.1 ships USB only; the UART
+        (EUL/TUL serial-downlink stick) and Thread/RCP sources are added as
+        sibling options here when their merge milestones land.
+
+config CDC2NET_SOURCE_USB
+    bool "USB host (CDC-ACM + FTDI/CH34x/CP210x VCP)"
+    help
+        USB-OTG host port opens the attached stick: native CDC-ACM
+        (CUL/TUL/EUL), or a foreign FTDI / WCH CH34x / Silabs CP210x
+        USB-serial bridge through its VCP driver (chip framing + baud).
+        Requires a USB-OTG-capable SoC (ESP32-S2 / S3 / P4).
+
+config CDC2NET_SOURCE_USB_CHERRY
+    bool "USB host via CherryUSB (CDC-ACM + FTDI/CH34x/CP210x built in)"
+    help
+        Same bridge source as CDC2NET_SOURCE_USB, but on the CherryUSB host
+        stack instead of espressif/usb.  Pick this when the root port runs at
+        high speed and full-speed sticks sit behind a hub: esp-usb has no
+        transaction-translator support and rejects them outright, CherryUSB
+        implements split transactions.  Mandatory on ESP32-S31 (UTMI-only PHY
+        -> the root port is always high speed); optional on S2/S3, where the
+        full-speed root port makes a hub fall back to FS and TT never applies.
+        Ships CDC-ACM/FTDI/CH34x/CP210x class drivers itself, so the three
+        vendored *_vcp components are not built on this path.
+
+config CDC2NET_SOURCE_UART
+    bool "Onboard radio over hardware UART (EUL/TUL serial downlink)"
+    help
+        The EUL/TUL sticks carry their radio module (EnOcean TCM515 on
+        EUL) on an internal hardware UART instead of a USB-host port.
+        Byte-transparent pipe: UART RX -> bridge -> TCP, and back; the
+        host (FHEM) speaks ESP3 to the TCM515 end-to-end through the pipe.
+        Works on any SoC with a spare UART (the EUL/TUL line is C3/C6/C5).
+        Pins/baud default to the C6 EUL generation; override via -D flags.
+
+endchoice
+
+config CDC2NET_ETH_W5500
+    bool "W5500 SPI Ethernet (FPC add-on, line-wide on the C6 generation)"
+    default n
+    help
+        Bring up a Wiznet W5500 SPI Ethernet PHY in addition to / instead
+        of WiFi.  The C6 EUL/TUL generation has an FPC header for a W5500.
+        Coexists with the WiFi-STA/SoftAP net layer (the TCP listener binds
+        INADDR_ANY and serves over whichever interface has an IP).  Probed
+        at boot: absent W5500 -> logged and skipped, WiFi still comes up.
+        SPI pins default to the EULFW32 C6 map; override via -D flags.
+
+config CDC2NET_RADIO_FLASH
+    bool "Flash the companion radio SoC from this image (S3+H2 gateway board)"
+    default n
+    depends on CDC2NET_SOURCE_UART
+    help
+        On boards where the UART source is a second ESP SoC (ESP Thread-BR /
+        Zigbee-GW board: ESP32-S3 host + ESP32-H2 radio), keep that radio's
+        firmware in the `radio_fw` partition and write it over the same
+        inter-chip UART plus the radio's reset/boot straps, using
+        esp-serial-flasher.  One factory image then carries the whole device,
+        while an app-only OTA leaves a matching radio alone: the radio's
+        esp_app_desc is read back and compared before anything is written.
+        Requires a partition table with `radio_fw` (partitions_ota.csv) and
+        that partition filled with the radio's merged factory image.
+        Pins default to the gateway board (reset 7 / boot 8, UART_TCM_*);
+        override via -D RADIO_FLASH_{RESET,BOOT}_GPIO.
+
+config CDC2NET_EEPROM_M24C32
+    bool "M24C32 I2C config EEPROM (EUL/TUL C6 carrier)"
+    default n
+    help
+        Probe an M24C32 32-Kbit I2C serial EEPROM (slave 0x50) at boot and
+        run a non-destructive read-modify-write self-test, surfacing the
+        result + geometry as the WebUI "EEPROM" tile (features.eeprom + the
+        eeprom{} status block).  The C6 EUL/TUL generation carries this part
+        on a dedicated WE-gated I2C bus; the shared bridge PCB leaves the pads
+        unpopulated, so leave this off there (the tile stays hidden).  A
+        missing/broken chip is handled gracefully (state 0/2), never asserts.
+        Pins default to the EULFW32 C6 map (SDA=22 SCL=23 WE=15); override -D.
+
+config CDC2NET_MISSION_TBR
+    bool "Experimental: on-device Thread Border Router (C6 native radio + W5500 backbone)"
+    default n
+    depends on CDC2NET_ETH_W5500
+    help
+        Bring up a full on-device OpenThread Border Router on the ESP32-C6's
+        native 802.15.4 radio, using the W5500 ethernet netif as the IP backbone,
+        running alongside the UART-source bridge — a single C6 stick acting as
+        both a serial bridge and a Thread border router (no RCP / second radio).
+        Requires CONFIG_CDC2NET_ETH_W5500.  Pulls in OpenThread + full lwIP IPv6
+        forwarding + mbedtls ECJPAKE/DTLS — append sdkconfig.defaults.tbr to the
+        build's SDKCONFIG_DEFAULTS for the matching Kconfig values.  Experimental.
+
+endmenu

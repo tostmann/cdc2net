@@ -6,7 +6,7 @@
 CONFIG_CDC2NET_SOURCE_UART=y
 
 # ---- W5500 SPI ethernet (FPC add-on; line-wide on the C6 generation) ------
-# CDC2NET_ETH_W5500 gates net_eth.c + the esp_eth REQUIRES in src/CMakeLists.
+# CDC2NET_ETH_W5500 gates net_eth.c + the esp_eth REQUIRES in main/CMakeLists.
 # The in-core esp_eth W5500 driver needs the two ETH_* options below (IDF 5.5.x
 # still ships the SPI-Ethernet chip drivers in core; removed only in 6.0).
 CONFIG_CDC2NET_ETH_W5500=y

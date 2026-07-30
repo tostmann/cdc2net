@@ -1,0 +1,53 @@
+# CDC2NET — ESP32-S31 overlay.  USB-host bridge mission on the S31
+# (bringup board: ESP32-S31-Function-CoreBoard-1, WROOM-3, 16 MB flash).
+#
+# The S31 is a PREVIEW target on IDF master (v6.x) and unknown to the pinned
+# PlatformIO platform — it is built with plain idf.py instead (same tree,
+# app sources in main/):
+#
+#   idf.py --preview set-target esp32s31 && idf.py build
+#
+# IDF auto-appends this file to sdkconfig.defaults for the esp32s31 target,
+# so the zero-arg invocation above yields the full working config.  Flash
+# offsets differ from the S3 (bootloader @0x2000, NOT 0x0) — always take
+# them from build/flasher_args.json.
+#
+# ---- Mission: USB-host source on CherryUSB (NOT esp-usb) ------------------
+# Hard requirement, not a preference: the S31 OTG exposes only the UTMI
+# high-speed PHY, so the root port runs HS and full-speed devices behind a
+# hub need split transactions (TT).  esp-usb (1.4.x) has no TT support and
+# rejects them ("transaction translator (TT) is not supported"); CherryUSB
+# ≥1.6 implements splits and is bench-proven on the S31 (hub + 3 FS devices,
+# bulk both ways).  A single FS device directly on the root port works on
+# either stack.
+CONFIG_CDC2NET_SOURCE_USB=n
+CONFIG_CDC2NET_SOURCE_USB_CHERRY=y
+# CherryUSB host stack — keep in sync with sdkconfig.defaults.cherry (the
+# S3 variant of the same source).  Without this block the cherryusb
+# component compiles no sources and the link fails ("undefined reference
+# to usbh_serial_*").
+CONFIG_CHERRYUSB=y
+CONFIG_CHERRYUSB_HOST=y
+CONFIG_CHERRYUSB_HOST_DWC2_ESP=y
+CONFIG_CHERRYUSB_HOST_CDC_ACM=y
+CONFIG_CHERRYUSB_HOST_FTDI=y
+CONFIG_CHERRYUSB_HOST_CH34X=y
+CONFIG_CHERRYUSB_HOST_CP210X=y
+CONFIG_USBHOST_SERIAL=y
+CONFIG_USBHOST_PSC_PRIO=0
+CONFIG_USBHOST_PSC_STACKSIZE=4096
+CONFIG_USBHOST_REQUEST_BUFFER_LEN=512
+CONFIG_USBHOST_CONTROL_TRANSFER_TIMEOUT=500
+CONFIG_USBHOST_SERIAL_RX_SIZE=2048
+
+# ---- Flash / partitions ---------------------------------------------------
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_ota.csv"
+
+# ---- Console --------------------------------------------------------------
+# UART0 = the CoreBoard's CP2102N bridge port; this is also the Improv
+# transport.  The S31's USB-Serial-JTAG is a SEPARATE controller (own PHY,
+# runs concurrently with the OTG host — unlike the S3 there is no PHY
+# sharing conflict), so the IDF default (UART0 console, secondary
+# USB-Serial-JTAG) is already right; nothing to override.

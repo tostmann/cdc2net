@@ -28,6 +28,13 @@ markiert.
   **v6.0**. → C5-Zeilen sind **blocked**, nicht „roadmap-locker".
 - **CC1200 (CUL32)** = SPI-Radio, **kein** serielles Downlink → künftige `source_spi.c`,
   keine `source_uart`-Zeile.
+- **S31 = USB-HS-Host (16 Kanäle), aber NUR mit CherryUSB:** der S31-OTG hat ausschließlich
+  den UTMI-HS-PHY → Root-Port läuft HS, FS-Sticks hinter einem Hub brauchen Split-Transactions
+  (TT). esp-usb (1.4.x) implementiert keinen TT und disabled solche Ports; CherryUSB ≥1.6 kann
+  Splits (HW-bewiesen: Hub + 3 FS-Geräte gleichzeitig, Kanal-Vergabe dynamisch pro URB).
+  `esp32s31` ist Preview-Target auf IDF master → **kein PlatformIO-Env**; Build aus demselben
+  Tree via `idf.py --preview set-target esp32s31 && idf.py build` (Overlay
+  `sdkconfig.defaults.esp32s31` macht das zero-arg; App-Sourcen liegen dafür in `main/`).
 - **W5500-Ethernet = linienweite First-Class-Option (nicht nur S3-M5):** alle busware TUL/EUL
   der **neuen C6-Generation** tragen einen **FPC-Header für nachträgliches W5500**. ⇒ ETH gilt
   für die C6-Stick-Linie genauso wie für die S3-Bridge; jede C6-Stick-Mission hat eine
@@ -50,6 +57,7 @@ markiert.
 |---|---|---|---|---|---|---|---|---|---|---|
 | `cdc2net-s3-wifi` | `esp32-s3-devkitc-1` | S3 | USB-Host-Bridge: ext. CUL/VCP-Stick → raw TCP | `source_usb` +3 VCP | **HOST** (OTG) | WiFi+SoftAP | backlog | **ja (shipped)** | `partitions_ota.csv` 16M/3M | **SHIPPED 0.1.48** |
 | `cdc2net-s3-eth` | `esp32-s3-devkitc-1` | S3 | + W5500 wired uplink | `source_usb` +3 VCP | HOST (OTG) | **ETH**+WiFi | backlog | ja | `partitions_ota.csv` | M5 geplant |
+| *(kein env — idf.py)* | *IDF master `--preview`* | **S31** | USB-**HS**-Host-Bridge, 16 Kanäle, Multi-Stick-Ziel (mehrere Sticks hinter Hub) | `source_usb_cherry` (Pflicht, TT) | **HOST** (OTG-HS) | WiFi+SoftAP | backlog | ja | `partitions_ota.csv` 16M/3M | **✅ HW-VERIFIZIERT 2026-07-22/23** (Boot/CUL/WiFi/Improv/OTA/RFC2217/FHEM-RX/10-h-Soak; Hub-Rig offen) |
 | `eul-c6` (`-eth`) | `esp32-c6-devkitc-1` | C6 | EnOcean-Stick (TCM515) — **byte-transparent** (kein on-device ESP3-Framer; FHEM dekodiert end-to-end) | `source_uart` ✅ | device-only | WiFi+SoftAP **+W5500** | backlog | ja† | `partitions_eul_4m.csv` (**4M** modul!) | **✅ HW-VERIFIZIERT 2026-06-10 (W5500-DHCP + TCM515-BaseID FF:EE:52:00)** |
 | `eul-c3-wifi` | `seeed_xiao_esp32c3` | C3 | EnOcean-Stick, low-flash | `source_uart` (neu) | device-only | WiFi+SoftAP | backlog | optional† | `partitions_c3_4m.csv` (neu, 1.856M) | roadmap |
 | `tul-c6-wifi` | `esp32-c6-devkitc-1` | C6 | KNX-Stick (NCN5130) | `source_uart` + KNX-Decoder | device-only | WiFi+SoftAP | backlog | optional† | `partitions_c6.csv` | **aspirational — keine Impl** |
@@ -85,15 +93,15 @@ EULFW32 (CS=GPIO17). C3-legacy hat **keinen** FPC.
 `s_usb` → `s_src` umbenennen (betrifft auch `main.c:100 source_describe`).
 
 ### 3.2 Component-Gating — **am meisten unterschätzt**
-`src/CMakeLists.txt` listet heute hart in `REQUIRES`: `usb usb_host_cdc_acm
+`main/CMakeLists.txt` listet heute hart in `REQUIRES`: `usb usb_host_cdc_acm
 usb_host_ftdi_vcp usb_host_ch34x_vcp usb_host_cp210x_vcp`. Die **bauen nicht auf C3/C6**.
 → CMake-`if(CONFIG_CDC2NET_SOURCE_USB)` um SRCS **und** REQUIRES.
-**Achtung (über src/CMakeLists hinaus):** die 3 VCP-Components unter `firmware/components/`
+**Achtung (über main/CMakeLists hinaus):** die 3 VCP-Components unter `firmware/components/`
 werden vom IDF-Component-Manager **auto-gescannt** und laufen ihren eigenen configure-Schritt
 **unabhängig** von REQUIRES → sie müssen **selbst target-guarden** (supported_targets in ihrer
 `idf_component.yml`/CMakeLists), sonst failt ein C6-Build an *ihrem* configure-step. Nur
-src/CMakeLists gaten ist **notwendig, nicht hinreichend**. (Interagiert mit der CLAUDE.md-Falle
-„kein `EXTRA_COMPONENT_DIRS`".)
+main/CMakeLists gaten ist **notwendig, nicht hinreichend**. (Hängt mit der Regel zusammen,
+kein `EXTRA_COMPONENT_DIRS` zu setzen.)
 
 ### 3.3 `sdkconfig.defaults.<chip>`-Overlay
 - **S3:** `CONFIG_ESP_PHY_ENABLE_USB=y` (load-bearing) + `CONFIG_ESP_CONSOLE_UART_DEFAULT=y`.
@@ -139,7 +147,7 @@ EULFW32s Device↔Supervisor-Split). Backend in `webui.c h_status`: neuer `featu
   ist der Port von EULFW32s Arduino-`Wire`-RMW-Probe auf `esp_driver_i2c` (neue I2C-Master-API):
   Boot-Probe @0x50 → zerstörungsfreier RMW auf dem letzten Byte (read orig → write orig^0xA5 →
   verify → restore → verify) → state 0/1/2, plus WE-Pin-Gating (HIGH=lock). Gegated via
-  `CONFIG_CDC2NET_EEPROM_M24C32` (Kconfig.projbuild + `if()` in src/CMakeLists → `esp_driver_i2c`),
+  `CONFIG_CDC2NET_EEPROM_M24C32` (Kconfig.projbuild + `if()` in main/CMakeLists → `esp_driver_i2c`),
   **default n**, in `sdkconfig.defaults.esp32c6` auf `y`. webui.c emittiert `features.eeprom` +
   `eeprom{state,size,page}` (Block immer da, Nullen wenn nicht compiliert → uniforme Shape; JS liest
   ihn nur bei `features.eeprom===true`). Pins = EULFW32-C6-Map SDA=22/SCL=23/WE=15 (kollidieren NICHT

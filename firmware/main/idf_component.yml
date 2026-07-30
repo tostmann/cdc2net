@@ -1,0 +1,34 @@
+## Project manifest for the `main` component (PlatformIO's src_dir points at main/).
+##
+## Everything CDC2NET needs is vendored under components/ and picked up
+## automatically — CherryUSB included: it used to come from the registry (its
+## upstream tree is ~106 MB), but it now carries a local fix that the registry
+## build cannot provide, so components/cherryusb holds a trimmed copy of 1.6.1
+## (~2 MB, ports other than dwc2 / docs / demos / tools / third_party removed).
+## See components/cherryusb/VENDORING.md for provenance and the patch.
+##
+## No registry entry for it any more: a components/ directory and a managed
+## dependency of the same upstream would both end up in the build and clash.
+## The build is still gated in CMakeLists.txt on CONFIG_CDC2NET_SOURCE_USB_CHERRY,
+## so the C3/C6 stick missions (CDC2NET_SOURCE_UART) never pull it into REQUIRES.
+dependencies:
+  ## cJSON left the IDF tree in v6 (in-tree `json` component removed) — pull
+  ## the registry replacement there.  The rule keeps IDF 5.x builds (the
+  ## pinned PlatformIO envs) on the in-tree component: nothing is downloaded,
+  ## nothing changes for them.  Gated a second time in CMakeLists.txt via
+  ## IDF_VERSION_MAJOR (which side lands in REQUIRES).
+  espressif/cjson:
+    version: "*"
+    rules:
+      - if: "idf_version >=6.0.0"
+
+  ## Companion-radio flashing (CDC2NET_RADIO_FLASH, radio_flash.c): writes the
+  ## embedded radio image to a second ESP SoC over UART + reset/boot straps.
+  ## The same library Espressif's own esp_rcp_update is built on.  v2 API
+  ## (esp_loader_t handle) and needs IDF >= 5.5, which the pinned PlatformIO
+  ## envs provide.  Restricted to the host-SoC targets that actually carry a
+  ## companion radio, so the C3/C6 stick missions never download it.
+  espressif/esp-serial-flasher:
+    version: "^2.0.0"
+    rules:
+      - if: "target in [esp32s3, esp32s2, esp32p4]"

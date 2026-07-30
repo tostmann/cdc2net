@@ -57,7 +57,7 @@
 <header>
   <div class="brand">
     <img alt="busware" src="data:image/png;base64,__LOGO__">
-    <h1>CDC2NET &mdash; USB-CDC Bridge</h1>
+    <h1 id="h-title">CDC2NET &mdash; Serial Bridge</h1>
   </div>
   <span class="stamp" id="stamp">…</span>
 </header>
@@ -66,7 +66,7 @@
 
   <div class="card cat-device"><h2>Device</h2><table id="t-device"></table></div>
 
-  <div class="card cat-usb"><h2>USB stick</h2><table id="t-usb"></table>
+  <div class="card cat-usb"><h2 id="h-src">USB stick</h2><table id="t-usb"></table>
     <details><summary>Serial config (baud)</summary>
       <label><span>Device key</span><input type="text" id="s-key" readonly></label>
       <label><span>Baud</span>
@@ -120,6 +120,16 @@
       <div class="msg" id="m-ecfg"></div>
     </details>
   </div>
+
+  <div class="card cat-device" id="card-radio" style="display:none"><h2>Zigbee radio</h2>
+    <table id="t-radio"></table>
+    <details><summary>Update radio firmware</summary>
+      <p style="color:var(--mut);font-size:.85em;margin:.3em 0">Upload the radio's merged factory image (radio_h2.bin). It is staged
+      into the radio_fw partition; the device reboots and flashes the radio if the
+      image differs from what the radio is running (~25 s).</p>
+      <div class="btnrow"><input type="file" id="radiofile" accept=".bin"><button id="b-radio" type="button">Flash</button></div>
+      <div class="msg" id="m-radio"></div>
+    </details></div>
 
   <div class="card cat-pipe"><h2>Pipe</h2><table id="t-pipe"></table>
     <details><summary>Port config</summary>
@@ -181,14 +191,41 @@ async function refresh(){
   try{ j=await (await fetch("/api/status",{cache:"no-store"})).json(); }
   catch(e){ $("stamp").textContent="(unreachable)"; return; }
   $("stamp").textContent=new Date().toLocaleTimeString();
-  const u=j.usb;
+  const u=j.usb, r=j.radio||{};
+  // A UART-attached module has no USB identity — vid/pid stay 0000 there, and
+  // calling the tile "USB stick" would be plain wrong (the gateway board has an
+  // ESP32-H2 on that UART).  Title and rows follow what is actually attached.
+  const viaUsb = !(u.vid==="0000" && u.pid==="0000");
+  $("h-src").textContent = viaUsb ? "USB stick" : "Radio link";
+  // Headline follows what this box actually is.  "USB-CDC Bridge" is only true
+  // for the USB-host build; a UART-attached radio (Zigbee NCP on the gateway
+  // board, EnOcean/KNX on the sticks) is something else entirely.
+  const title = viaUsb ? "USB-CDC Bridge"
+              : r.present ? "Zigbee Coordinator Bridge"
+              : (u.product||"Serial Bridge").replace(/\s*\(UART\)\s*$/,"") + " Bridge";
+  const hdr=$("h-title"); if(hdr.textContent!=="CDC2NET — "+title) hdr.textContent="CDC2NET — "+title;
+  document.title = "CDC2NET " + title;
   fill("t-usb",[
     row("State", u.connected?'<span class="on">open</span>':'<span class="off">closed</span>'),
-    row("VID:PID", u.vid+":"+u.pid),
-    ...(u.product?[row("Product",u.product)]:[]),
-    ...(u.manuf?[row("Vendor",u.manuf)]:[]),
+    ...(viaUsb?[row("VID:PID", u.vid+":"+u.pid)]:[]),
+    ...(u.product?[row(viaUsb?"Product":"Module",u.product)]:[]),
+    ...(u.manuf&&viaUsb?[row("Vendor",u.manuf)]:[]),
     row("RX / TX", kb(u.rx)+" / "+kb(u.tx)),
   ]);
+  if(r.present){
+    $("card-radio").style.display="";
+    const chip = r.target===7?"ESP32-H2":(r.target===13?"ESP32-C6":"target "+r.target);
+    const same = r.running && r.staged && r.running===r.staged;
+    fill("t-radio",[
+      row("Chip", chip),
+      row("Firmware", (r.project||"?")+" "+(r.running||"unknown")),
+      row("Staged", r.staged||"(none)"),
+      row("State", same?'<span class="on">in sync</span>'
+                       :'<span class="ap">differs from staged</span>'),
+      row("Last boot", r.rewritten?'<span class="ap">radio reflashed</span>':"unchanged"),
+      row("Verified", kb(r.app_bytes)),
+    ]);
+  } else $("card-radio").style.display="none";
   const w=j.wifi||{}, e=j.eth||{};
   fill("t-wifi",[
     row("State", w.up?'<span class="on">connected</span>':(w.ap?'<span class="ap">AP mode</span>':'<span class="off">down</span>')),
@@ -357,6 +394,16 @@ $("b-install").onclick=async()=>{
   try{ await fetch("/api/update/install",{method:"POST"}); }catch(e){}
 };
 
+$("b-radio").onclick=async()=>{
+  const f=$("radiofile").files[0];
+  if(!f){ msg("m-radio","pick a radio .bin first","err"); return; }
+  msg("m-radio","uploading "+kb(f.size)+"…"); $("b-radio").disabled=true;
+  try{
+    const r=await fetch("/api/radio",{method:"POST",body:f});
+    msg("m-radio", r.ok?("staged — "+await r.text()+" — rebooting, radio sync follows"):("failed: "+await r.text()), r.ok?"ok":"err");
+  }catch(e){ msg("m-radio","upload error (device may be rebooting)","err"); }
+  $("b-radio").disabled=false;
+};
 $("b-ota").onclick=async()=>{
   const f=$("otafile").files[0];
   if(!f){ msg("m-ota","pick a .bin first","err"); return; }

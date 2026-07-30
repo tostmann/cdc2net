@@ -1,0 +1,30 @@
+# zbgw — ESP Thread-BR / Zigbee-GW board (ESP32-S3 host + ESP32-H2 radio).
+#
+# The H2 runs the full ZBOSS NCP (busware esp-coordinator) and reaches the S3
+# over the board's inter-chip UART; the S3 is a byte-transparent UART->TCP
+# bridge with the W5500 sub-board as its uplink.  So: UART source, not USB
+# host — this fragment overrides the esp32s3 overlay's SOURCE_USB choice, the
+# same way sdkconfig.defaults.cherry does.
+CONFIG_CDC2NET_SOURCE_USB=n
+CONFIG_CDC2NET_SOURCE_UART=y
+
+# W5500 on the official "ESP Thread BR-Zigbee GW_SUB" ethernet sub-board.
+# CDC2NET_ETH_W5500 gates net_eth.c + the esp_eth REQUIRES in main/CMakeLists;
+# the in-core esp_eth W5500 driver additionally needs the two ETH_* options
+# (IDF 5.5.x still ships the SPI-Ethernet chip drivers in core, removed in 6.0)
+# — same trio as sdkconfig.defaults.esp32c6.
+CONFIG_CDC2NET_ETH_W5500=y
+CONFIG_ETH_USE_SPI_ETHERNET=y
+CONFIG_ETH_SPI_ETHERNET_W5500=y
+
+# One artifact for the whole board: the H2's ZBOSS-NCP firmware ships in the
+# radio_fw partition and is written over the inter-chip UART at boot when the H2
+# runs something else (ot_rcp ab Werk) or a different version.  See radio_flash.h.
+CONFIG_CDC2NET_RADIO_FLASH=y
+
+# Console on the native USB-Serial/JTAG, not UART0.  This board's USB-C goes
+# straight to the S3's USJ — there is no CH34x bridge like on the YD-ESP32-S3,
+# and UART0 only reaches a pin header.  With UART0 as the console, Improv-Serial
+# (improv_glue.cpp picks its transport from this very option) would listen on a
+# port no user can reach, leaving the captive AP as the only way to onboard WiFi.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y

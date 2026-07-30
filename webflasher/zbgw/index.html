@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP Zigbee-Gateway Flasher (ZBOSS NCP over the network)</title>
+    <link rel="icon" type="image/png" href="../busware.png">
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-hover: #1d4ed8;
+            --bg: #f8fafc;
+            --card-bg: #ffffff;
+            --text: #1e293b;
+            --muted: #64748b;
+            --border: #e2e8f0;
+            --danger: #ef4444;
+            --success: #22c55e;
+            --code-bg: #f1f5f9;
+        }
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            line-height: 1.6;
+        }
+        .container {
+            width: 100%;
+            max-width: 820px;
+            background: var(--card-bg);
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+        }
+        h1 { margin-top: 0; font-size: 1.6rem; }
+        h2 { font-size: 1.15rem; margin-top: 2rem; border-bottom: 1px solid var(--border); padding-bottom: .3rem; }
+        .lede { color: var(--muted); }
+        .flash-box {
+            text-align: center;
+            padding: 1.5rem;
+            margin: 1.5rem 0;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--bg);
+        }
+        esp-web-install-button { --esp-tools-button-color: var(--primary); }
+        code, pre {
+            background: var(--code-bg);
+            border-radius: 4px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: .9em;
+        }
+        code { padding: .1rem .35rem; }
+        pre { padding: .8rem 1rem; overflow-x: auto; }
+        table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+        th, td { text-align: left; padding: .5rem .6rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+        th { color: var(--muted); font-weight: 600; font-size: .9em; }
+        .note {
+            border-left: 3px solid var(--primary);
+            background: var(--code-bg);
+            padding: .8rem 1rem;
+            margin: 1rem 0;
+            border-radius: 0 4px 4px 0;
+        }
+        .warn { border-left-color: var(--danger); }
+        footer { color: var(--muted); font-size: .85em; margin-top: 2.5rem; text-align: center; }
+        a { color: var(--primary); }
+        .logo { display: block; margin: 0 auto 1rem; height: 40px; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <img src="../busware.png" alt="busware.de" class="logo">
+    <h1>ESP Zigbee-Gateway — Zigbee Coordinator over the network</h1>
+    <p class="lede">
+        Turns the <strong>ESP Thread Border Router / Zigbee Gateway board</strong> (ESP32-S3 + ESP32-H2)
+        into a network-attached Zigbee coordinator. The H2 runs the full ZBOSS NCP firmware
+        (<a href="../">esp-coordinator</a>); the S3 bridges its frame stream to a TCP port over
+        Ethernet or WiFi. Zigbee2MQTT talks to it exactly as it would to a USB stick — just over
+        <code>tcp://</code> instead of a serial port.
+    </p>
+
+    <div class="flash-box">
+        <p><strong>Connect the board's USB-C port that belongs to the ESP32-S3</strong>, then:</p>
+        <!-- Two parts: the S3 factory image at 0x0 and the H2's firmware into the
+             radio_fw partition at 0x620000.  esp-web-tools writes both. -->
+        <esp-web-install-button manifest="manifest.json"></esp-web-install-button>
+        <p style="color:var(--muted);font-size:.9em;margin-bottom:0">
+            Chromium-based desktop browser required (Web Serial). Firefox and Safari cannot flash.
+        </p>
+    </div>
+
+    <h2>What gets written</h2>
+    <p>
+        One click installs <em>both</em> chips. The S3 image carries the H2's firmware in a
+        dedicated flash partition and writes it to the H2 on first boot, over the inter-chip UART:
+    </p>
+    <table>
+        <tr><th>Part</th><th>Offset</th><th>Goes to</th></tr>
+        <tr><td>S3 gateway firmware</td><td><code>0x0</code></td><td>ESP32-S3 — bridge, web UI, OTA</td></tr>
+        <tr><td>Zigbee radio firmware</td><td><code>0x620000</code></td><td>staged, then flashed into the ESP32-H2</td></tr>
+    </table>
+    <div class="note">
+        The very first boot takes about half a minute longer than later ones: the S3 finds a factory
+        board still running Espressif's <code>ot_rcp</code>, and replaces it with the ZBOSS NCP
+        firmware (~720 KB, verified by MD5). Subsequent boots compare versions and skip the write.
+        A firmware update of the S3 alone therefore leaves a matching radio untouched.
+    </div>
+
+    <h2>After flashing</h2>
+    <p>
+        The board works as it comes — no add-on required. Onboard WiFi is provisioned over the very
+        same USB port you just flashed from, via <a href="https://www.improv-wifi.com/">Improv</a>.
+        If you would rather not use a cable at all: leave the gateway unconfigured for about two
+        minutes and it opens its own access point (<code>CDC2NET&nbsp;XXXX</code>, no password), where
+        a configuration page at <code>192.168.4.1</code> takes your network details.
+    </p>
+    <p>
+        With the optional Ethernet sub-board fitted, a wired connection is picked up by DHCP at boot
+        and takes precedence — the access point then stays off, since the web UI is reachable over the
+        network anyway. Either way the web UI lives on port 80 and the device announces itself
+        over mDNS.
+    </p>
+    <p>Point Zigbee2MQTT at the raw-TCP port:</p>
+<pre>serial:
+  adapter: zboss
+  port: tcp://&lt;gateway-ip&gt;:2329</pre>
+    <div class="note warn">
+        The <code>zboss</code> adapter is marked experimental in stock Zigbee2MQTT, and coordinator
+        backup/restore needs the matching container image. See the
+        <a href="https://github.com/tostmann/esp-coordinator">project README</a> before putting a
+        production network on it.
+    </div>
+
+    <h2>Notes on this hardware</h2>
+    <ul>
+        <li>Espressif's factory firmware makes the S3 <em>reflash the H2 back to</em>
+            <code>ot_rcp</code> whenever the H2 stops answering Spinel. Flashing only the H2 with
+            coordinator firmware therefore does not stick — install this image on the S3 instead,
+            which is what the button above does.</li>
+        <li>The two chips talk over an internal UART (H2 GPIO24/23 ↔ S3 GPIO17/18) plus the H2's
+            reset and boot straps on S3 GPIO7/8 — the same wiring Espressif's own RCP updater uses.</li>
+        <li>This build is specific to the gateway board's wiring. The generic ESP32-H2 image from the
+            <a href="../">stick flasher</a> uses different UART pins and will not talk to the S3.</li>
+        <li><strong>Known limitation with the Ethernet sub-board:</strong> if the gateway boots with no
+            cable <em>and</em> no WiFi credentials, it opens its configuration access point after about
+            two minutes. Plugging the network cable in <em>after</em> that point may leave the Ethernet
+            link stuck — a restart brings it up normally. Booting with the cable already connected, or
+            plugging it in before the access point appears, is unaffected.</li>
+    </ul>
+
+    <footer>
+        <a href="https://github.com/tostmann/esp-coordinator">tostmann/esp-coordinator</a> ·
+        firmware GPL-2.0-or-later · <a href="https://busware.de">busware.de</a>
+    </footer>
+</div>
+<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+</body>
+</html>

@@ -11,3 +11,15 @@ phy_init, data, phy,     0xf000,   0x1000
 ota_0,    app,  ota_0,   0x10000,  0x300000
 ota_1,    app,  ota_1,   0x310000, 0x300000
 coredump, data, coredump,0x610000, 0x10000
+# radio_fw (768 KB, appended — existing layouts are unchanged, so OTA to a
+# device flashed before this partition existed still works): holds the merged
+# factory image of the companion radio SoC on boards that have one (S3+H2
+# gateway).  main/radio_flash.c reads it and writes it to the radio over the
+# inter-chip UART.  Espressif's own border-router firmware carries its ot_rcp
+# the same way (its rcp_fw partition).
+#
+# Deliberately a partition rather than EMBED_FILES in the app: PlatformIO builds
+# `main` with SCons and never expands EMBED_FILES (the .S is not generated), and
+# a partition also keeps the ~720 KB out of BOTH OTA slots and lets the two
+# chips be updated independently — an app OTA leaves the radio image alone.
+radio_fw, data, spiffs,  0x620000, 0xC0000

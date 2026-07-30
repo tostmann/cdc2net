@@ -82,6 +82,7 @@ case "$MISSION" in
   cdc2net) MANIFEST_NAME="CDC2NET — USB-Host CDC↔TCP Bridge (CUL)";;
   tul)     MANIFEST_NAME="TUL — KNX-TP (NCN5130) ↔ TCP Bridge";;
   eul)     MANIFEST_NAME="EUL — EnOcean (TCM515) ↔ TCP Bridge";;
+  zbgw)    MANIFEST_NAME="ESP Zigbee-Gateway — ZBOSS NCP over the network (S3 + H2)";;
   *)       MANIFEST_NAME="CDC2NET — $MISSION";;
 esac
 
@@ -197,7 +198,7 @@ echo "   bootloader.bin Header-Byte 2 = 0x02  ✔"
 if [ -n "$TAG_STRIPPED" ]; then
   VERSION="$TAG_STRIPPED"
 else
-  VERSION=$(awk '/^#define FW_VERSION_STRING / {gsub(/"/,"",$3); print $3}' firmware/src/version.h)
+  VERSION=$(awk '/^#define FW_VERSION_STRING / {gsub(/"/,"",$3); print $3}' firmware/main/version.h)
 fi
 # Manifest-version-Feld MUSS MAJOR.MINOR.BUILD sein (cmp_ver: sscanf %d.%d.%d).
 echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || {
@@ -288,9 +289,28 @@ cp "$BUILD_DIR/firmware.bin" "$FIRMWARE"
 # keeps the sibling chip's entry and hard-ABORTS on a version clash (a mission
 # ships under ONE version).  The top-level `version` drives /api/update/check.
 FW_MD5=$(md5sum "$FIRMWARE" | awk '{print $1}')
+
+# ── zbgw: companion-radio image as a second webflash part ────────────────
+# The gateway board is two chips; the factory webflash must also seed the
+# radio_fw partition (0x620000) so a blank S3 self-heals the H2 on first
+# boot.  Source of truth = firmware/radio_fw/radio_h2.bin (the board-variant
+# H2 build staged for radio_flash).  Hard-ABORT if missing/invalid — a zbgw
+# release without the radio image would flash gateways with an empty
+# radio_fw and no NCP.
+EXTRA_PARTS=()
+if [ "$MISSION" = "zbgw" ]; then
+  RADIO_SRC="$REPO_ROOT/firmware/radio_fw/radio_h2.bin"
+  [ -s "$RADIO_SRC" ] || { echo "ABORT: $RADIO_SRC fehlt/leer (zbgw braucht den Radio-Blob)" >&2; exit 2; }
+  head -c1 "$RADIO_SRC" | od -An -tx1 | grep -q e9 \
+    || { echo "ABORT: $RADIO_SRC hat kein 0xE9-Image-Magic" >&2; exit 2; }
+  cp "$RADIO_SRC" "$OUT_TARGET/radio_h2.bin"
+  EXTRA_PARTS+=("radio_h2.bin@0x620000")
+  echo "   radio part: radio_h2.bin ($(stat -c%s "$RADIO_SRC") B) @0x620000"
+fi
+
 python3 "$REPO_ROOT/firmware/scripts/merge_manifest.py" \
     "$OUT_TARGET/manifest.json" "$MANIFEST_NAME" "$VERSION" \
-    "$CHIPFAMILY" "$FACTORY_NAME" "$FIRMWARE_NAME" "$FW_MD5"
+    "$CHIPFAMILY" "$FACTORY_NAME" "$FIRMWARE_NAME" "$FW_MD5" "${EXTRA_PARTS[@]}"
 
 # ───── MD5SUMS — regenerate from ALL files in the (merged) target dir ────
 ( cd "$OUT_TARGET" && md5sum -- *.bin manifest.json > MD5SUMS )
