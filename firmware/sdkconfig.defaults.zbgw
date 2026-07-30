@@ -28,3 +28,26 @@ CONFIG_CDC2NET_RADIO_FLASH=y
 # (improv_glue.cpp picks its transport from this very option) would listen on a
 # port no user can reach, leaving the captive AP as the only way to onboard WiFi.
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# --- PSRAM: vorhanden und nutzbar, absichtlich AUS -----------------------
+# Board-Fakten hardware-verifiziert 2026-07-30 (die Espressif-Doku nennt 8 MB
+# Flash / 2 MB PSRAM — dieses Board hat 16 MB Flash und 8 MB Octal-PSRAM):
+#   eFuse: PSRAM_CAP=8M, PSRAM_VENDOR=AP_3v3, PSRAM_TEMP=85C
+#   Testbuild mit den vier Optionen unten lief sauber hoch:
+#     octal_psram: vendor 0x0d (AP), density 0x03 (64 Mbit), good-die Pass
+#     esp_psram: Found 8MB PSRAM device
+#     esp_psram: Adding pool of 8192K of PSRAM memory to heap allocator
+#   -> freier Heap 8.468.148 B statt ~141 KB, Bridge + z2m + Zigbee-Roundtrip
+#      im Smoke-Test unauffaellig.
+# AUS, weil aktuell nichts davon profitiert: die Bridge-Puffer sind klein, und
+# PSRAM auf dem S3 aendert Speicherlayout/Cache-Verhalten neben WiFi+SPI-DMA —
+# Risiko ohne Nutzen in einem Produkt-Image. Einschalten, sobald es einen
+# Grund gibt (grosse Replay-/Fanning-Puffer), dann aber mit eigener Soak-
+# Validierung, nicht nur Smoke-Test.
+# FALLE beim Aktivieren: PlatformIO regeneriert firmware/sdkconfig.<env> NICHT,
+# wenn nur diese Defaults-Datei ergaenzt wird -> firmware/sdkconfig.zbgw-s3
+# vorher loeschen, sonst landen die Optionen nie im Build.
+#CONFIG_SPIRAM=y
+#CONFIG_SPIRAM_MODE_OCT=y
+#CONFIG_SPIRAM_SPEED_80M=y
+#CONFIG_SPIRAM_IGNORE_NOTFOUND=y
