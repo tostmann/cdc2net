@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ESP Zigbee-Gateway Flasher (ZBOSS NCP over the network)</title>
-    <link rel="icon" type="image/png" href="../busware_logo.png">
+    <link rel="icon" type="image/png" href="../busware_logo_dark.png">
     <style>
         :root {
             --primary: #2563eb;
@@ -75,7 +75,7 @@
 </head>
 <body>
 <div class="container">
-    <img src="../busware_logo.png" alt="busware.de" class="logo">
+    <img src="../busware_logo_dark.png" alt="busware.de" class="logo">
     <h1>ESP Zigbee-Gateway — Zigbee Coordinator over the network</h1>
     <p class="lede">
         Turns the <strong>ESP Thread Border Router / Zigbee Gateway board</strong> (ESP32-S3 + ESP32-H2)
@@ -85,8 +85,14 @@
         <code>tcp://</code> instead of a serial port.
     </p>
 
+    <div class="note warn">
+        <strong>Use the socket marked <code>USB2</code></strong> — that is the ESP32-S3.
+        The board's other USB-C, <code>USB1</code>, goes to the ESP32-H2 and cannot flash this image.
+        If the browser reports an <strong>ESP32-H2</strong> after you pick the port, you are on the wrong socket.
+    </div>
+
     <div class="flash-box">
-        <p><strong>Connect the board's USB-C port that belongs to the ESP32-S3</strong>, then:</p>
+        <p><strong>Connect the board's <code>USB2</code> socket (ESP32-S3)</strong>, then:</p>
         <!-- Two parts: the S3 factory image at 0x0 and the H2's firmware into the
              radio_fw partition at 0x620000.  esp-web-tools writes both. -->
         <esp-web-install-button manifest="manifest.json"></esp-web-install-button>
@@ -108,7 +114,8 @@
     <div class="note">
         The very first boot takes about half a minute longer than later ones: the S3 finds a factory
         board still running Espressif's <code>ot_rcp</code>, and replaces it with the ZBOSS NCP
-        firmware (~720 KB, verified by MD5). Subsequent boots compare versions and skip the write.
+        firmware (~720 KB, verified by MD5). Subsequent boots verify the radio's application
+        against the staged image (MD5) and rewrite only on a mismatch.
         A firmware update of the S3 alone therefore leaves a matching radio untouched.
     </div>
 
@@ -140,13 +147,14 @@
     <h2>Notes on this hardware</h2>
     <ul>
         <li>Espressif's factory firmware makes the S3 <em>reflash the H2 back to</em>
-            <code>ot_rcp</code> whenever the H2 stops answering Spinel. Flashing only the H2 with
+            <code>ot_rcp</code> when it detects the radio failing to come up as a Spinel RCP
+            (a documented recovery feature). Flashing only the H2 with
             coordinator firmware therefore does not stick — install this image on the S3 instead,
             which is what the button above does.</li>
         <li>The two chips talk over an internal UART (H2 GPIO24/23 ↔ S3 GPIO17/18) plus the H2's
             reset and boot straps on S3 GPIO7/8 — the same wiring Espressif's own RCP updater uses.</li>
         <li>This build is specific to the gateway board's wiring. The generic ESP32-H2 image from the
-            <a href="../">stick flasher</a> uses different UART pins and will not talk to the S3.</li>
+            <a href="https://install.busware.de/zboss/">stick flasher</a> uses different UART pins and will not talk to the S3.</li>
         <li><strong>Known limitation with the Ethernet sub-board:</strong> if the gateway boots with no
             cable <em>and</em> no WiFi credentials, it opens its configuration access point after about
             two minutes. Plugging the network cable in <em>after</em> that point may leave the Ethernet
@@ -155,8 +163,9 @@
     </ul>
 
     <footer>
-        <a href="https://github.com/tostmann/esp-coordinator">tostmann/esp-coordinator</a> ·
-        firmware GPL-2.0-or-later · <a href="https://busware.de">busware.de</a>
+        coordinator <a href="https://github.com/tostmann/esp-coordinator">tostmann/esp-coordinator</a> (MIT) ·
+        gateway <a href="https://github.com/tostmann/cdc2net">tostmann/cdc2net</a> (GPL-2.0-or-later) ·
+        <a href="https://busware.de">busware.de</a>
     </footer>
 </div>
 <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>

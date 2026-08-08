@@ -98,6 +98,19 @@
   </p>
 </div>
 
+<div class="panel">
+  <h2 style="margin-top:0">Looking for the Zigbee gateway?</h2>
+  <p>A variant of this firmware turns Espressif's <strong>ESP Thread Border Router /
+     Zigbee Gateway board</strong> (ESP32-S3&nbsp;+&nbsp;ESP32-H2) into a
+     <strong>network-attached Zigbee coordinator</strong>: the H2 runs the ZBOSS NCP
+     firmware, the S3 bridges it to <code>:2329</code> over Ethernet or WiFi, and
+     Zigbee2MQTT connects with <code>tcp://&lt;gateway-ip&gt;:2329</code>. One click
+     flashes both chips.</p>
+  <p><a href="zbgw/"><strong>Open the ESP Zigbee-Gateway flasher →</strong></a>
+     <br><small style="color:var(--mute)">Different board, different image — the
+     installer above is for the plain USB-host bridge.</small></p>
+</div>
+
 <div class="warn">
   <strong>Browser requirement:</strong> Web&nbsp;Serial only works in
   Chromium-based <em>desktop</em> browsers — <strong>Chrome, Edge, Opera,

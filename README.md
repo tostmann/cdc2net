@@ -78,6 +78,27 @@ esptool.py --chip esp32s3 -p /dev/ttyACM0 write_flash 0x0 factory_cdc2net_esp32s
 
 `firmware.bin` next to it is the app-only image used by the in-device OTA.
 
+### Zigbee gateway variant (ESP32-S3 + ESP32-H2 board)
+
+A second build targets Espressif's **ESP Thread Border Router / Zigbee Gateway
+board** and turns it into a **network-attached Zigbee coordinator**: the
+on-board ESP32-H2 runs the
+[esp-coordinator](https://github.com/tostmann/esp-coordinator) ZBOSS NCP
+firmware, and CDC2NET on the S3 bridges its frame stream to `:2329` over
+Ethernet or WiFi. Zigbee2MQTT connects with `adapter: zboss` and
+`port: tcp://<gateway-ip>:2329`.
+
+**<https://install.busware.de/cdc2net/zbgw/>** — one click writes both chips:
+the S3 image carries the H2's firmware in a dedicated `radio_fw` partition and
+flashes it over the inter-chip UART on first boot (MD5-verified). Later boots
+verify the radio's application against the staged image (MD5) and rewrite only
+on a mismatch, so a gateway update leaves a matching radio untouched, and an
+erased or half-written H2 is repaired automatically.
+
+> This overwrites Espressif's factory firmware on **both** chips; the way back
+> to a Thread border router (Espressif's esp-thread-br firmware) is untested
+> here.
+
 ## Use
 
 After flashing and WiFi onboarding, the device comes up as `cdc2net.local`.
