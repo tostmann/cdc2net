@@ -2,7 +2,8 @@
 
 Transparent **USB-Host-CDC → network bridge** for the ESP32-S3 — a
 ser2net-style gateway that puts an unmodified USB serial stick onto the
-network (WiFi now, Ethernet later) **without touching the stick's firmware**.
+network (WiFi, or wired Ethernet where the board has it) **without touching
+the stick's firmware**.
 
 Built for the **CUL / TUL / EUL** line, but it bridges any common USB serial
 stick:
@@ -39,6 +40,9 @@ same port.
   connection owns the line parameters.
 - **WiFi onboarding** — Improv-Serial right after flashing, or a captive
   portal. Static-IP or DHCP, configurable TCP port, a connectivity watchdog.
+- **Wired Ethernet (W5500)** — on carrier boards that have one: picked up by
+  DHCP at boot, takes precedence over WiFi, and the fallback access point stays
+  off while the link is up.
 - **Web UI** on port 80 — status, configuration, logs, and OTA.
 - **OTA updates** — upload a `.bin` from the browser, or pull a release
   straight from the update server.
@@ -50,8 +54,13 @@ same port.
 ## Why the S3
 
 Only the ESP32-S2/S3/P4 have a USB-OTG **host** peripheral — a C3/C6 cannot be
-the host. WiFi-only for now; a **W5500 Ethernet** option is planned (the
-network layer is already link-abstracted for it).
+the host.
+
+The network layer is link-abstracted: WiFi is the uplink on a plain S3 dev
+board, while builds whose carrier board carries a **W5500** get wired Ethernet
+as well (`firmware/main/net_eth.c`, enabled on the gateway build and the C6
+stick builds). An absent W5500 is detected and skipped, so the same code runs
+on boards without one.
 
 ## Install
 
@@ -95,9 +104,15 @@ verify the radio's application against the staged image (MD5) and rewrite only
 on a mismatch, so a gateway update leaves a matching radio untouched, and an
 erased or half-written H2 is repaired automatically.
 
+> Flash the socket marked **`USB2`** — that is the ESP32-S3. The board's other
+> USB-C (`USB1`) goes to the ESP32-H2 and cannot write this image.
+
 > This overwrites Espressif's factory firmware on **both** chips; the way back
 > to a Thread border router (Espressif's esp-thread-br firmware) is untested
 > here.
+
+Design notes — radio-flash policy, partition layout, board wiring, the 8 MB
+flash decision and the PSRAM finding — are in [`docs/zbgw.md`](docs/zbgw.md).
 
 ## Use
 
