@@ -54,6 +54,41 @@ Two consequences worth knowing:
 The partition is appended after the existing layout, so a device flashed before
 it existed still takes an OTA.
 
+### Updating the radio over the network
+
+`POST /api/radio` stages a new radio image without touching USB. The body is the
+**merged factory image** of the radio SoC (bootloader at 0, partition table,
+otadata, app at `0x20000`) — exactly what `radio_flash.c` consumes. The upload
+only rewrites the `radio_fw` partition and reboots; the actual inter-chip flash
+happens in `radio_flash_sync()` on the way up, which re-validates and
+MD5-compares as always. Staging an image the radio already runs is therefore a
+no-op, and a new version costs the usual ~25 s reflash.
+
+Guards, in order:
+
+1. a `radio_fw` partition must exist — gateway boards only, `404` elsewhere;
+2. `content_len` inside `[app-descriptor minimum, partition size]`;
+3. first byte `0xE9`, the radio bootloader's image magic;
+4. **chip-id fence**: header offset 12 must match the chip id of the image
+   currently staged, when there is one. That is a self-consistent cross-chip
+   check without a target table — the board knows which radio it carries because
+   the previous image was for it. A blank partition skips the check (first
+   stage). Without it, a wrong-chip image would put the radio into a boot loop
+   that the self-healing sync would re-flash forever;
+5. after the write, the radio's app descriptor is read back from flash and its
+   magic word verified. On failure the partition is left invalid and
+   `radio_flash_sync()` refuses to touch the radio, which keeps running its
+   current firmware — no destructive half-state.
+
+**Commit-marker scheme.** Sector 0 carries the `0xE9` magic, so it is held in RAM
+and written *last*, after the whole body arrived and the descriptor verified. A
+brownout or dropped connection mid-upload then leaves the first byte at `0xFF`
+and the stage is refused. Without it, a cut past the app descriptor would leave
+a truncated-but-valid-looking image that the self-healing sync would flash onto
+the radio forever. The whole partition is erased rather than just `content_len`,
+because the image size is derived by trimming trailing `0xFF` — leftovers of a
+longer previous image would otherwise be read as part of the new one.
+
 | Partition  | Offset     | Size    | Purpose                          |
 |------------|------------|---------|----------------------------------|
 | `ota_0`    | `0x010000` | 3 MB    | app slot                         |
