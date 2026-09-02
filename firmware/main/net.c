@@ -85,6 +85,93 @@ static void compute_names(void)
              mac[4], mac[5]);
 }
 
+// --- WiFi-Abriss-Historie (siehe net.h) -----------------------------------
+// Bewusst RAM-only: die Historie beantwortet "was ist heute Nacht passiert",
+// nicht "was war letzte Woche" — ein Reboot ist ohnehin die Zaesur, nach der
+// die Frage neu gestellt wird.  Geschrieben aus dem Event-Task, gelesen aus
+// dem HTTP-Task, daher portMUX statt Mutex (der Writer laeuft in einem
+// Event-Callback und darf nicht blockieren).
+static portMUX_TYPE   s_disc_mux = portMUX_INITIALIZER_UNLOCKED;
+static net_disc_evt_t s_disc[NET_DISC_HISTORY_MAX];
+static uint32_t       s_disc_head;    // naechster Schreibindex, monoton
+static uint32_t       s_disc_total;
+
+static void disc_record(uint8_t reason, int8_t rssi)
+{
+    portENTER_CRITICAL(&s_disc_mux);
+    s_disc[s_disc_head % NET_DISC_HISTORY_MAX] = (net_disc_evt_t){
+        .ts_ms = esp_log_timestamp(), .reason = reason, .rssi = rssi,
+    };
+    s_disc_head++;
+    s_disc_total++;
+    portEXIT_CRITICAL(&s_disc_mux);
+}
+
+size_t net_disc_history(net_disc_evt_t *out, size_t cap)
+{
+    if (!out || cap == 0) return 0;
+    portENTER_CRITICAL(&s_disc_mux);
+    uint32_t h = s_disc_head;
+    size_t   n = (h < NET_DISC_HISTORY_MAX) ? h : NET_DISC_HISTORY_MAX;
+    if (n > cap) n = cap;
+    for (size_t i = 0; i < n; i++)            // neuester zuerst
+        out[i] = s_disc[(h - 1 - i) % NET_DISC_HISTORY_MAX];
+    portEXIT_CRITICAL(&s_disc_mux);
+    return n;
+}
+
+uint32_t net_disc_total(void)
+{
+    portENTER_CRITICAL(&s_disc_mux);
+    uint32_t t = s_disc_total;
+    portEXIT_CRITICAL(&s_disc_mux);
+    return t;
+}
+
+// WiFi-Disconnect-Reason als Klartext.  IDF exportiert keinen Mapper; hier
+// nur die Codes, die die Faelle unterscheiden, um die es bei einem Abriss im
+// Betrieb geht — AP hat uns weggeschickt (2/3/4/5/8) vs. wir haben den AP
+// verloren (200) vs. Auth/Assoc kam nie zustande (201-205).  Alles andere
+// bleibt die nackte Nummer (esp_wifi_types_generic.h, wifi_err_reason_t).
+const char *net_wifi_reason_str(int reason)
+{
+    switch (reason) {
+    case WIFI_REASON_UNSPECIFIED:       return "UNSPECIFIED";
+    case WIFI_REASON_AUTH_EXPIRE:       return "AUTH_EXPIRE";
+    case WIFI_REASON_AUTH_LEAVE:        return "AUTH_LEAVE";
+    case WIFI_REASON_ASSOC_EXPIRE:      return "ASSOC_EXPIRE";
+    case WIFI_REASON_ASSOC_TOOMANY:     return "ASSOC_TOOMANY";
+    case WIFI_REASON_ASSOC_LEAVE:       return "ASSOC_LEAVE";
+    case WIFI_REASON_NOT_AUTHED:        return "NOT_AUTHED";
+    case WIFI_REASON_NOT_ASSOCED:       return "NOT_ASSOCED";
+    case WIFI_REASON_ASSOC_NOT_AUTHED:  return "ASSOC_NOT_AUTHED";
+    case WIFI_REASON_BSS_TRANSITION_DISASSOC: return "BSS_TRANSITION_DISASSOC";
+    case WIFI_REASON_IE_INVALID:        return "IE_INVALID";
+    case WIFI_REASON_MIC_FAILURE:       return "MIC_FAILURE";
+    // 15 ist der haeufigste Real-World-Code ueberhaupt: falsches PSK — und
+    // zugleich das Leitsymptom des ESP32-C6-WiFi-Power-Save-Problems.  Im
+    // ersten Bench-Lauf stand hier "?", genau deshalb steht er jetzt drin.
+    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:   return "4WAY_HANDSHAKE_TIMEOUT";
+    case WIFI_REASON_GROUP_KEY_UPDATE_TIMEOUT: return "GROUP_KEY_UPDATE_TIMEOUT";
+    case WIFI_REASON_IE_IN_4WAY_DIFFERS:       return "IE_IN_4WAY_DIFFERS";
+    case WIFI_REASON_GROUP_CIPHER_INVALID:     return "GROUP_CIPHER_INVALID";
+    case WIFI_REASON_PAIRWISE_CIPHER_INVALID:  return "PAIRWISE_CIPHER_INVALID";
+    case WIFI_REASON_AKMP_INVALID:      return "AKMP_INVALID";
+    case WIFI_REASON_802_1X_AUTH_FAILED:       return "802_1X_AUTH_FAILED";
+    case WIFI_REASON_CIPHER_SUITE_REJECTED:    return "CIPHER_SUITE_REJECTED";
+    case WIFI_REASON_STA_LEAVING:       return "STA_LEAVING";
+    case WIFI_REASON_BEACON_TIMEOUT:    return "BEACON_TIMEOUT";
+    case WIFI_REASON_NO_AP_FOUND:       return "NO_AP_FOUND";
+    case WIFI_REASON_AUTH_FAIL:         return "AUTH_FAIL";
+    case WIFI_REASON_ASSOC_FAIL:        return "ASSOC_FAIL";
+    case WIFI_REASON_HANDSHAKE_TIMEOUT: return "HANDSHAKE_TIMEOUT";
+    case WIFI_REASON_CONNECTION_FAIL:   return "CONNECTION_FAIL";
+    case WIFI_REASON_AP_TSF_RESET:      return "AP_TSF_RESET";
+    case WIFI_REASON_ROAMING:           return "ROAMING";
+    default:                            return "?";
+    }
+}
+
 static void event_cb(void* arg, esp_event_base_t base, int32_t id, void *data)
 {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
@@ -96,18 +183,34 @@ static void event_cb(void* arg, esp_event_base_t base, int32_t id, void *data)
             esp_wifi_connect();
         }
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        // Grund + RSSI MITLOGGEN, nicht wegwerfen: bei einem Abriss im
+        // laufenden Betrieb ist der Reason-Code die einzige Angabe, die
+        // "AP hat uns rausgeworfen" von "wir haben den AP verloren"
+        // trennt — ohne ihn ist ein Feldbericht nicht auswertbar
+        // (tostmann/esp-coordinator#12).
+        const wifi_event_sta_disconnected_t *dis =
+            (const wifi_event_sta_disconnected_t *)data;
+        const int reason = dis ? dis->reason : 0;
+        const int rssi   = dis ? dis->rssi   : 0;
         s_connected = false;
+        // Auch unter Improv-Kontrolle mitschreiben: der Abriss hat
+        // stattgefunden, unabhaengig davon, wer gerade reconnected.
+        disc_record((uint8_t)reason, (int8_t)rssi);
         if (s_external_control) {
             // Improv hat das Sagen — wir mischen uns nicht ein.
             return;
         }
         if (s_retry_count < MAX_RETRY && s_ssid_buf[0] != '\0') {
             s_retry_count++;
-            ESP_LOGW(TAG, "STA disconnected — retry %d/%d", s_retry_count, MAX_RETRY);
+            ESP_LOGW(TAG, "STA disconnected — reason %d %s, rssi %d — retry %d/%d",
+                     reason, net_wifi_reason_str(reason), rssi,
+                     s_retry_count, MAX_RETRY);
             esp_wifi_connect();
         } else if (s_ssid_buf[0] != '\0') {
             xEventGroupSetBits(s_eg, BIT_FAIL);
-            ESP_LOGE(TAG, "STA gave up after %d retries — falling back to SoftAP", MAX_RETRY);
+            ESP_LOGE(TAG, "STA gave up after %d retries (last reason %d %s) — "
+                          "falling back to SoftAP",
+                     MAX_RETRY, reason, net_wifi_reason_str(reason));
             net_start_softap();
         }
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {

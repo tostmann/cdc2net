@@ -18,6 +18,8 @@
 
 #include "esp_err.h"
 #include <stdbool.h>
+#include <stdint.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -112,8 +114,33 @@ bool net_uplink_is_up(void);
 // until the next reboot.  Bench-observed on the S3+H2 gateway board.
 void net_note_uplink_up(void);
 
+
+// --- WiFi-Abriss-Historie -------------------------------------------------
+// Ein Abriss im Dauerbetrieb hinterlaesst im Log nur eine Zeile, und der
+// RAM-Ring ist nach ~40 min voll — ein nachts aufgetretenes Ereignis ist am
+// naechsten Morgen nicht mehr nachweisbar (tostmann/esp-coordinator#12).
+// Diese Historie ueberlebt im RAM bis zum Reboot und haengt in /api/status,
+// ist also ohne offenes Browser-Tab und ohne Log-Fenster ablesbar.
+#define NET_DISC_HISTORY_MAX 8
+
+typedef struct {
+    uint32_t ts_ms;    // esp_log_timestamp() — dieselbe Zeitbasis wie die Log-Zeilen
+    uint8_t  reason;   // wifi_err_reason_t
+    int8_t   rssi;     // RSSI im Moment des Abrisses
+} net_disc_evt_t;
+
+// Kopiert bis zu `cap` Eintraege, NEUESTER ZUERST; returnt die Anzahl.
+size_t net_disc_history(net_disc_evt_t *out, size_t cap);
+
+// Gesamtzahl der Abrisse seit Boot (kann groesser sein als die Historie).
+uint32_t net_disc_total(void);
+
+// Klartext zu einem wifi_err_reason_t; "?" fuer unbekannte Codes.
+const char *net_wifi_reason_str(int reason);
+
 #ifdef __cplusplus
 }
 #endif
+
 
 #endif // CDC2NET_NET_H

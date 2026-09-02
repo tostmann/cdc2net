@@ -9,7 +9,17 @@
 #include <stdarg.h>
 #include <stdbool.h>
 
+// Ringgroesse pro Mission konfigurierbar (CDC2NET_LOG_BUFFER_LINES):  bei
+// 10-s-STATUS-Kadenz sind 128 Zeilen ~20 min Fenster — zu kurz, um ein
+// Ereignis einzufangen, das nur alle paar Stunden auftritt und dessen
+// Ursachenzeilen VOR dem Ereignis stehen (tostmann/esp-coordinator#12).
+// Kostet LB_LINE_CAP+4 Byte statisches RAM pro Zeile, daher nicht global
+// hochgedreht — die kleinen C3/C6-Missionen bleiben auf 128.
+#ifdef CONFIG_CDC2NET_LOG_BUFFER_LINES
+#define LB_MAX_LINES  CONFIG_CDC2NET_LOG_BUFFER_LINES
+#else
 #define LB_MAX_LINES  128
+#endif
 #define LB_LINE_CAP   200
 
 typedef struct {

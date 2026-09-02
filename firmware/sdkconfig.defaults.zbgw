@@ -65,3 +65,14 @@ CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 # Ueberschreibt sdkconfig.defaults.esp32s3 (16MB), das die anderen S3-Varianten
 # weiter nutzen. IDF 5.5.3 kennt KEIN ESPTOOLPY_FLASHSIZE_DETECT.
 CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+
+# --- Log-Ring: 256 statt 128 Zeilen ---------------------------------------
+# Dieses Board laeuft als Netz-Coordinator ueber Wochen durch, und die
+# interessanten Zeilen (WiFi-Abriss, Client-Exit) stehen VOR einem Ereignis,
+# das nur alle paar Stunden auftritt.  Mit 128 Zeilen deckt der Ring bei
+# 10-s-STATUS-Kadenz nur ~20 min ab — ein Feldbericht enthielt exakt deshalb
+# die Ursachenzeilen nicht mehr (tostmann/esp-coordinator#12).
+# 256 Zeilen = ~52 KB statisch (+26 KB); der S3 hatte im Feld ~122 KB freien
+# Heap, bleibt also bei ~96 KB.  Nicht weiter hochgedreht, solange das ohne
+# PSRAM laeuft — 8 MB PSRAM sind bestueckt, aber bewusst AUS (siehe oben).
+CONFIG_CDC2NET_LOG_BUFFER_LINES=256

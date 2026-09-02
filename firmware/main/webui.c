@@ -231,13 +231,33 @@ static esp_err_t h_status(httpd_req_t *req)
     unsigned ee_state = 0, ee_size = 0, ee_page = 0;
 #endif
 
-    char buf[2400];
+    // WiFi-Abriss-Historie: beantwortet "was ist heute Nacht passiert" ohne
+    // offenes Log-Tab.  8 Eintraege a ~62 Zeichen -> ~0,5 KB, deshalb ist buf
+    // unten entsprechend bemessen.
+    net_disc_evt_t disc[NET_DISC_HISTORY_MAX];
+    size_t disc_n = net_disc_history(disc, NET_DISC_HISTORY_MAX);
+    char   disc_json[640];
+    size_t dj = 0;
+    for (size_t i = 0; i < disc_n; i++) {
+        int w = snprintf(disc_json + dj, sizeof(disc_json) - dj,
+                         "%s{\"ts\":%u,\"reason\":%u,\"name\":\"%s\",\"rssi\":%d}",
+                         i ? "," : "", (unsigned)disc[i].ts_ms,
+                         (unsigned)disc[i].reason,
+                         net_wifi_reason_str(disc[i].reason),
+                         (int)disc[i].rssi);
+        if (w < 0 || (size_t)w >= sizeof(disc_json) - dj) break;
+        dj += w;
+    }
+    disc_json[dj] = '\0';
+
+    char buf[3072];
     int n = snprintf(buf, sizeof(buf),
         "{"
           "\"fw\":{\"version\":\"%s\",\"built\":\"%s\"},"
           "\"features\":{\"eeprom\":%s},"
           "\"wifi\":{\"up\":%s,\"ssid\":\"%s\",\"ip\":\"%s\",\"gw\":\"%s\","
-                  "\"ap\":%s,\"host\":\"%s\"},"
+                  "\"ap\":%s,\"host\":\"%s\","
+                  "\"disc\":{\"total\":%u,\"last\":[%s]}},"
           "\"eth\":{\"present\":%s,\"up\":%s,\"ip\":\"%s\",\"gw\":\"%s\"},"
           "\"radio\":{\"present\":%s,\"target\":%d,\"staged\":\"%s\","
                     "\"running\":\"%s\",\"project\":\"%s\","
@@ -262,6 +282,7 @@ static esp_err_t h_status(httpd_req_t *req)
         feat_eeprom ? "true" : "false",
         net_wifi_connected() ? "true" : "false", ssid_esc, net_wifi_ip_str(), net_wifi_gw_str(),
         net_is_ap_mode() ? "true" : "false", net_hostname(),
+        (unsigned)net_disc_total(), disc_json,
         eth_present ? "true" : "false", eth_up ? "true" : "false", eth_ip, eth_gw,
         ri->present ? "true" : "false", ri->target, ri->staged,
         ri->running, ri->project,

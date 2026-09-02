@@ -196,6 +196,12 @@
 <script>
 const $=id=>document.getElementById(id);
 const kb=b=>b<1024?b+" B":(b/1024).toFixed(1)+" KB";
+function discTxt(d){
+  if(!d) return "n/a";
+  if(!d.total) return "0";
+  const l=(d.last||[]).map(e=>e.reason+" "+e.name+" (rssi "+e.rssi+") at "+dur(e.ts/1000|0));
+  return d.total+(l.length?" — "+l.join("; "):"");
+}
 function dur(s){s=+s;const d=s/86400|0,h=s%86400/3600|0,m=s%3600/60|0,x=s%60;
   const p=n=>String(n).padStart(2,"0");return (d?d+"d ":"")+p(h)+":"+p(m)+":"+p(x);}
 function row(k,v){return `<tr><td>${k}</td><td>${v}</td></tr>`;}
@@ -264,6 +270,9 @@ async function refresh(){
   fill("t-wifi",[
     row("State", w.up?'<span class="on">connected</span>':(w.ap?'<span class="ap">AP mode</span>':'<span class="off">down</span>')),
     row("IP", w.ip), row("Gateway", w.gw), row("SSID", w.ssid||"(none)"),
+    // Abriss-Historie: ohne sie ist ein naechtlicher WiFi-Verlust am naechsten
+    // Morgen nicht mehr nachweisbar (der Log-Ring ist bis dahin voll).
+    row("Drops since boot", discTxt(w.disc)),
   ]);
   if(e.present){
     $("card-eth").style.display="";

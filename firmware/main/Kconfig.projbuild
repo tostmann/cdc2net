@@ -97,4 +97,17 @@ config CDC2NET_MISSION_TBR
         forwarding + mbedtls ECJPAKE/DTLS — append sdkconfig.defaults.tbr to the
         build's SDKCONFIG_DEFAULTS for the matching Kconfig values.  Experimental.
 
+config CDC2NET_LOG_BUFFER_LINES
+    int "Lines kept in the RAM log ring (/api/log, WebUI log card)"
+    default 128
+    range 32 512
+    help
+        Size of the ESP_LOG ring buffer the WebUI reads.  Each line costs
+        204 bytes of static RAM (200-byte payload + timestamp), so 128 lines
+        = ~26 KB.  At the 10-second STATUS cadence 128 lines is roughly a
+        20-minute window, which is too short to catch the lines preceding a
+        rare event (a WiFi drop at night) — raise it on missions whose chip
+        has the RAM to spare.  The web frontend appends what it has polled,
+        so a browser tab left open keeps more than the device does.
+
 endmenu
