@@ -49,6 +49,9 @@ same port.
 - **mDNS** — reachable as `cdc2net.local` (plus a unique `cdc2net-XXXX.local`);
   advertises `_http._tcp` for the web UI. The stream port is deliberately
   *not* advertised — what's on the host port is module-dependent.
+- **Reflash the attached CUL** — USB-source builds can push a new firmware
+  into an attached ATmega32U4 stick through its DFU bootloader, from the web
+  API, no PC and no cable change; see [`docs/cul-dfu.md`](docs/cul-dfu.md).
 - **One-click web flasher** — install over Web Serial from the browser.
 
 ## Why the S3
@@ -161,7 +164,7 @@ firmware/web/        web UI sources (gzipped + embedded into the firmware)
 firmware/scripts/    version bump + web-asset embed + release packaging
 webflasher/          ESP Web Tools manifest + landing page (release artifacts)
 images/              screenshots / assets for this README
-docs/                design notes and roadmap
+docs/                design notes, per-variant and per-feature documentation
 ```
 
 ## License
