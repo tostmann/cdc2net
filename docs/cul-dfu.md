@@ -43,7 +43,7 @@ run went:
 ```json
 {"present":true,"busy":false,"vid":"03EB","pid":"2FF4",
  "written":15736,"eeprom":"intact",
- "msg":"fertig: 15736 Byte geschrieben, EEPROM unveraendert"}
+ "msg":"done: 15736 bytes written, EEPROM unchanged"}
 ```
 
 `eeprom` is `unknown`, `intact` or `CHANGED` — the EEPROM is read before and

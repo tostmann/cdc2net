@@ -173,12 +173,12 @@ static esp_err_t wait_ok(uint32_t total_ms)
         if (status == DFU_STATUS_OK) return ESP_OK;
         if (state == DFU_STATE_DFU_ERROR) {
             dfu_clrstatus();
-            note("Bootlader meldet Fehler 0x%02X", status);
+            note("bootloader reports error 0x%02X", status);
             return ESP_FAIL;
         }
         vTaskDelay(pdMS_TO_TICKS(poll > step ? poll : step));
     }
-    note("Zeitueberschreitung beim Warten auf den Bootlader");
+    note("timed out waiting for the bootloader");
     return ESP_ERR_TIMEOUT;
 }
 
@@ -306,7 +306,7 @@ static void client_event_cb(const usb_host_client_event_msg_t *msg, void *arg)
         }
         if (usb_host_interface_claim(S.client, dev, DFU_IFACE, 0) != ESP_OK) {
             usb_host_device_close(S.client, dev);
-            note("Schnittstelle 0 nicht belegbar");
+            note("cannot claim interface 0");
             break;
         }
         S.dev = dev;
@@ -314,7 +314,7 @@ static void client_event_cb(const usb_host_client_event_msg_t *msg, void *arg)
         S.st.vid = d->idVendor;
         S.st.pid = d->idProduct;
         S.transaction = 0;
-        note("Bootlader angemeldet (%04X:%04X)", S.st.vid, S.st.pid);
+        note("bootloader attached (%04X:%04X)", S.st.vid, S.st.pid);
         break;
     }
     case USB_HOST_CLIENT_EVENT_DEV_GONE:
@@ -375,12 +375,12 @@ esp_err_t cul_dfu_flash(const uint8_t *img, size_t len)
     // ein stillschweigend gekuerztes Abbild waere eine halb geschriebene
     // Firmware, und das faellt erst beim naechsten Start auf.
     if (len > CUL_DFU_APP_LIMIT) {
-        note("Abbild zu gross (%u > %u Byte) — wuerde den Bootlader treffen",
+        note("image too large (%u > %u bytes) — would hit the bootloader",
              (unsigned)len, (unsigned)CUL_DFU_APP_LIMIT);
         return ESP_ERR_INVALID_SIZE;
     }
     if (!S.dev) {
-        note("kein Bootlader am Bus — erst `B01` an den Stick schicken");
+        note("no bootloader on the bus — send `B01` to the stick first");
         return ESP_ERR_NOT_FOUND;
     }
     if (xSemaphoreTake(S.lock, 0) != pdTRUE) return ESP_ERR_INVALID_STATE;
@@ -410,7 +410,7 @@ esp_err_t cul_dfu_flash(const uint8_t *img, size_t len)
     if (!ee_read_ok) ESP_LOGW(TAG, "EEPROM vorab nicht lesbar — Wache entfaellt");
 
     bool erase_fell_back = false;
-    note("loesche %u KB Programmspeicher", (unsigned)((len + 1023) / 1024));
+    note("erasing %u KB of program memory", (unsigned)((len + 1023) / 1024));
     e = atmel_erase_blocks(len, &erase_fell_back);
     if (e != ESP_OK) goto out;
 
@@ -419,11 +419,11 @@ esp_err_t cul_dfu_flash(const uint8_t *img, size_t len)
                                 ? ATMEL_MAX_TRANSFER : (len - off));
         e = atmel_flash_block((uint32_t)off, img + off, n);
         if (e != ESP_OK) {
-            note("Schreibfehler bei 0x%04X", (unsigned)off);
+            note("write error at 0x%04X", (unsigned)off);
             goto out;
         }
         S.st.written = off + n;
-        if (!S.dev) { e = ESP_ERR_NOT_FOUND; note("Bootlader verschwunden"); goto out; }
+        if (!S.dev) { e = ESP_ERR_NOT_FOUND; note("bootloader disappeared"); goto out; }
     }
 
     if (ee_read_ok
@@ -434,23 +434,23 @@ esp_err_t cul_dfu_flash(const uint8_t *img, size_t len)
             ESP_LOGE(TAG, "EEPROM hat sich beim Flashen VERAENDERT");
     }
 
-    note("%u Byte geschrieben, starte Anwendung", (unsigned)S.st.written);
+    note("%u bytes written, starting the application", (unsigned)S.st.written);
     e = atmel_start_app();
 
 out:
     S.st.busy = false;
     if (e == ESP_OK) {
         if (S.st.eeprom_checked && !S.st.eeprom_intact)
-            note("fertig: %u Byte geschrieben — ACHTUNG: EEPROM veraendert",
+            note("done: %u bytes written — WARNING: EEPROM changed",
                  (unsigned)S.st.written);
         else if (S.st.eeprom_checked)
-            note("fertig: %u Byte geschrieben, EEPROM unveraendert",
+            note("done: %u bytes written, EEPROM unchanged",
                  (unsigned)S.st.written);
         else if (erase_fell_back)
-            note("fertig: %u Byte — ganzer Baustein geloescht, EEPROM nicht pruefbar",
+            note("done: %u bytes — whole chip erased, EEPROM not verifiable",
                  (unsigned)S.st.written);
         else
-            note("fertig: %u Byte geschrieben, nur Programmspeicher geloescht",
+            note("done: %u bytes written, only program memory erased",
                  (unsigned)S.st.written);
     }
     xSemaphoreGive(S.lock);
