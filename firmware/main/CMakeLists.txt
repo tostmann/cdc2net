@@ -37,7 +37,10 @@ if(CONFIG_CDC2NET_SOURCE_USB)
     #     USB-serial bridges — FTDI status-byte strip + baud control.  These
     #     vendored components must self-target-guard (USB-OTG = S2/S3/P4 only)
     #     before a non-OTG mission builds — see docs/merge-targets.md §3.2.
-    list(APPEND cdc2net_srcs "source_usb.c" "hubprobe.c")
+    # cul_dfu.c haengt am selben USB-Wirt: es flasht den angesteckten
+    # AVR-Stick ueber sein DFU-Bootladerprofil. Nur sinnvoll, wo es
+    # ueberhaupt einen USB-Wirt gibt.
+    list(APPEND cdc2net_srcs "source_usb.c" "hubprobe.c" "cul_dfu.c")
     list(APPEND cdc2net_reqs usb usb_host_cdc_acm
                  usb_host_ftdi_vcp usb_host_ch34x_vcp usb_host_cp210x_vcp)
 endif()

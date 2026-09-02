@@ -27,6 +27,7 @@
 
 #include "usb/usb_host.h"
 #include "usb/cdc_acm_host.h"
+#include "cul_dfu.h"
 #include "usb/vcp_ftdi.h"     // ftdi_vcp_open   — FTDI FT23x (status-byte strip + baud)
 #include "usb/vcp_ch34x.h"    // ch34x_vcp_open  — WCH CH340/CH341
 #include "usb/vcp_cp210x.h"   // cp210x_vcp_open — Silabs CP210x
@@ -477,6 +478,14 @@ source_t *source_usb_init(void)
     };
     ESP_ERROR_CHECK(cdc_acm_host_install(&drv));
     xTaskCreate(stick_task, "stick", 6144, NULL, 4, NULL);
+
+    // Zweiter Wirt-Klient neben dem CDC-Treiber: er nimmt sich AUSSCHLIESSLICH
+    // das DFU-Bootladerprofil des AVR-Sticks und laesst alles andere wieder
+    // los, damit die serielle Quelle unberuehrt bleibt. Fehlschlag ist nicht
+    // fatal — dann faellt nur das Flashen ueber den Bus weg.
+    if (cul_dfu_start() != ESP_OK) {
+        ESP_LOGW(TAG, "DFU-Klient nicht gestartet — Flashen ueber den Bus entfaellt");
+    }
 
     ESP_LOGI(TAG, "USB host + CDC-ACM source installed");
     return &S.source;

@@ -131,6 +131,24 @@
       <div class="msg" id="m-radio"></div>
     </details></div>
 
+  <div class="card cat-fw" id="card-dfu" style="display:none"><h2>Stick firmware</h2>
+    <table id="t-dfu"></table>
+    <details><summary>Flash the attached stick</summary>
+      <p style="color:var(--mut);font-size:.85em;margin:.3em 0">Writes a new firmware into the stick that is plugged into this
+      device — over USB, no cable swap and no button. Needs a <b>raw image starting at address&nbsp;0</b>
+      (<code>avr-objcopy -O binary</code>), <b>not</b> an Intel&nbsp;HEX file. Flash takes a
+      second or two; the stick reboots into it by itself.</p>
+      <p style="color:var(--mut);font-size:.85em;margin:.3em 0">The stick's EEPROM is read before and after the write and compared,
+      so a firmware update that would silently cost you the stick's settings shows up as
+      <b>EEPROM: CHANGED</b> instead of going unnoticed. Measured on a busware CUL868 it stays untouched.</p>
+      <p style="color:var(--mut);font-size:.85em;margin:.3em 0">Flash does the whole sequence: it asks the stick to jump to its
+      bootloader, waits for it to re-appear, then writes. Use <i>Bootloader</i> on its own only to
+      park the stick there, e.g. to flash it from somewhere else.</p>
+      <div class="btnrow"><input type="file" id="dfufile" accept=".bin"><button id="b-dfu" type="button">Flash</button>
+      <button id="b-dfu-bl" type="button">Bootloader</button></div>
+      <div class="msg" id="m-dfu"></div>
+    </details></div>
+
   <div class="card cat-pipe"><h2>Pipe</h2><table id="t-pipe"></table>
     <details><summary>Port config</summary>
       <label><span>TCP port</span><input type="number" id="c-port" min="1" max="65535"></label>
@@ -226,6 +244,22 @@ async function refresh(){
       row("Verified", kb(r.app_bytes)),
     ]);
   } else $("card-radio").style.display="none";
+  // Stick-Firmware: nur zeigen, wo es ueberhaupt einen USB-Wirt gibt. Der
+  // Endpunkt fehlt in UART-Bauformen, ein Fehlschlag blendet die Karte aus.
+  try{
+    const d=await (await fetch("/api/cul/dfu",{cache:"no-store"})).json();
+    $("card-dfu").style.display="";
+    fill("t-dfu",[
+      row("Bootloader", d.present?'<span class="on">attached</span>'
+                                 :'<span class="off">not attached</span>'),
+      ...(d.present?[row("VID:PID", d.vid+":"+d.pid)]:[]),
+      ...(d.written?[row("Last write", kb(d.written))]:[]),
+      ...(d.eeprom&&d.eeprom!=="unknown"?[row("EEPROM",
+          d.eeprom==="intact"?'<span class="on">untouched</span>'
+                             :'<span class="off">CHANGED — settings lost</span>')]:[]),
+      ...(d.msg?[row("Last message", d.msg)]:[]),
+    ]);
+  }catch(e){ $("card-dfu").style.display="none"; }
   const w=j.wifi||{}, e=j.eth||{};
   fill("t-wifi",[
     row("State", w.up?'<span class="on">connected</span>':(w.ap?'<span class="ap">AP mode</span>':'<span class="off">down</span>')),
@@ -403,6 +437,50 @@ $("b-radio").onclick=async()=>{
     msg("m-radio", r.ok?("staged — "+await r.text()+" — rebooting, radio sync follows"):("failed: "+await r.text()), r.ok?"ok":"err");
   }catch(e){ msg("m-radio","upload error (device may be rebooting)","err"); }
   $("b-radio").disabled=false;
+};
+async function dfuState(){
+  try{ return await (await fetch("/api/cul/dfu",{cache:"no-store"})).json(); }
+  catch(e){ return null; }
+}
+async function dfuEnterBootloader(){
+  // Den Sprungbefehl schickt das Geraet, nicht der Browser — der kann die
+  // serielle Bruecke nicht oeffnen.
+  try{ await fetch("/api/cul/dfu/enter",{method:"POST"}); }catch(e){}
+  // Der Stick meldet sich ab und neu an; das dauert erfahrungsgemaess
+  // ein bis zwei Sekunden. Zehn Sekunden Geduld sind reichlich.
+  for(let i=0;i<20;i++){
+    await new Promise(r=>setTimeout(r,500));
+    const d=await dfuState();
+    if(d&&d.present) return true;
+  }
+  return false;
+}
+$("b-dfu-bl").onclick=async()=>{
+  msg("m-dfu","asking the stick to enter its bootloader…");
+  $("b-dfu-bl").disabled=true;
+  const ok=await dfuEnterBootloader();
+  msg("m-dfu", ok?"bootloader attached — ready to flash":"no bootloader appeared", ok?"ok":"err");
+  $("b-dfu-bl").disabled=false;
+};
+$("b-dfu").onclick=async()=>{
+  const f=$("dfufile").files[0];
+  if(!f){ msg("m-dfu","pick a raw .bin first","err"); return; }
+  $("b-dfu").disabled=true; $("b-dfu-bl").disabled=true;
+  try{
+    let d=await dfuState();
+    if(!d||!d.present){
+      msg("m-dfu","entering bootloader…");
+      if(!await dfuEnterBootloader()){
+        msg("m-dfu","no bootloader appeared — is this stick able to enter one?","err");
+        return;
+      }
+    }
+    msg("m-dfu","writing "+kb(f.size)+"…");
+    const r=await fetch("/api/cul/dfu",{method:"POST",body:f});
+    const t=await r.text();
+    msg("m-dfu", r.ok?("done — "+t+" — stick restarted"):("failed: "+t), r.ok?"ok":"err");
+  }catch(e){ msg("m-dfu","upload error","err"); }
+  finally{ $("b-dfu").disabled=false; $("b-dfu-bl").disabled=false; }
 };
 $("b-ota").onclick=async()=>{
   const f=$("otafile").files[0];

@@ -6,6 +6,9 @@
 
 #include "radio_flash.h"   // radio_info_t / radio_flash_info()
 #include "webui.h"
+#if defined(CONFIG_CDC2NET_SOURCE_USB)
+#include "cul_dfu.h"
+#endif
 #include "version.h"
 #include "bridge.h"
 #include "net.h"
@@ -632,6 +635,109 @@ static esp_err_t h_radio(httpd_req_t *req)
 
 // ───── /api/update/check — online manifest version check ────────────────
 
+#if defined(CONFIG_CDC2NET_SOURCE_USB)
+// ───── /api/cul/dfu — den angesteckten AVR-Stick ueber USB neu flashen ─────
+//
+// Erwartet ein ROHES Speicherabbild ab Adresse 0 (avr-objcopy -O binary),
+// KEINE Intel-HEX-Datei: ein Datei-Zerleger auf dem Geraet waere zusaetzlicher
+// Programmtext ohne Gewinn, und wer flasht, hat die Datei ohnehin zur Hand.
+//
+// Voraussetzung: der Stick muss VORHER in seinen Bootlader gesprungen sein
+// (beim CUL `B01` ueber die serielle Bruecke). Haengt keiner am Bus, sagt der
+// Endpunkt das, statt blind zu warten.
+// POST /api/cul/dfu/enter — den Stick in seinen Bootlader schicken.
+//
+// Der Befehl dafuer ist GERAETESACHE, nicht Sache dieser Bruecke: beim CUL ist
+// es `B01`, ein anderer Stick kann etwas anderes verlangen. Deshalb nimmt der
+// Endpunkt den Befehl im Rumpf entgegen und benutzt `B01` nur als Vorgabe,
+// wenn nichts mitkommt. Geschrieben wird an der Sperre vorbei (Sender NULL =
+// System), damit ein gerade verbundener TCP-Klient das nicht blockiert.
+static esp_err_t h_cul_dfu_enter(httpd_req_t *req)
+{
+    char cmd[32] = "B01";
+    if (req->content_len > 0 && req->content_len < (int)sizeof(cmd) - 3) {
+        int got = httpd_req_recv(req, cmd, (size_t)req->content_len);
+        if (got <= 0) return ESP_FAIL;
+        cmd[got] = '\0';
+        // Zeilenende des Aufrufers abraeumen, wir haengen unseres an.
+        for (int i = got - 1; i >= 0 && (cmd[i] == '\r' || cmd[i] == '\n'); i--) cmd[i] = '\0';
+    }
+    if (cmd[0] == '\0') strcpy(cmd, "B01");
+    strcat(cmd, "\r\n");
+
+    esp_err_t e = bridge_tx_to_source(NULL, (const uint8_t *)cmd, strlen(cmd));
+    if (e != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "source not ready");
+        return ESP_FAIL;
+    }
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, "{\"ok\":true}");
+    return ESP_OK;
+}
+
+static esp_err_t h_cul_dfu_body(httpd_req_t *req)
+{
+    const int len = req->content_len;
+    if (len <= 0 || len > CUL_DFU_APP_LIMIT) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "content_len out of range");
+        return ESP_FAIL;
+    }
+    if (!cul_dfu_status()->present) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                            "no DFU device attached - send B01 to the stick first");
+        return ESP_FAIL;
+    }
+
+    uint8_t *img = malloc((size_t)len);
+    if (!img) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "out of memory");
+        return ESP_FAIL;
+    }
+    int got = 0;
+    while (got < len) {
+        int r = httpd_req_recv(req, (char *)img + got, (size_t)(len - got));
+        if (r <= 0) { free(img); return ESP_FAIL; }
+        got += r;
+    }
+
+    esp_err_t e = cul_dfu_flash(img, (size_t)len);
+    free(img);
+
+    const cul_dfu_status_t *st = cul_dfu_status();
+    char body[224];
+    snprintf(body, sizeof(body), "{\"ok\":%s,\"written\":%u,\"msg\":\"%s\"}",
+             e == ESP_OK ? "true" : "false", (unsigned)st->written, st->last);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, body);
+    return ESP_OK;
+}
+
+static esp_err_t h_cul_dfu(httpd_req_t *req)
+{
+    app_wdt_pause_main();
+    esp_err_t ret = h_cul_dfu_body(req);
+    app_wdt_resume_main();
+    return ret;
+}
+
+// Haengt gerade ein Bootlader am Bus, und wie ist der letzte Lauf ausgegangen?
+static esp_err_t h_cul_dfu_get(httpd_req_t *req)
+{
+    const cul_dfu_status_t *st = cul_dfu_status();
+    char body[256];
+    snprintf(body, sizeof(body),
+             "{\"present\":%s,\"busy\":%s,\"vid\":\"%04X\",\"pid\":\"%04X\","
+             "\"written\":%u,\"eeprom\":\"%s\",\"msg\":\"%s\"}",
+             st->present ? "true" : "false", st->busy ? "true" : "false",
+             st->vid, st->pid, (unsigned)st->written,
+             !st->eeprom_checked ? "unknown" : (st->eeprom_intact ? "intact" : "CHANGED"),
+             st->last);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, body);
+    return ESP_OK;
+}
+#endif  // CONFIG_CDC2NET_SOURCE_USB
+
 static esp_err_t h_update_check(httpd_req_t *req)
 {
     bool refresh = (req->method == HTTP_POST);
@@ -972,6 +1078,11 @@ esp_err_t webui_init(uint16_t port)
     u = (httpd_uri_t){ .uri="/api/reboot",       .method=HTTP_POST, .handler=h_reboot };       httpd_register_uri_handler(s_http, &u);
     u = (httpd_uri_t){ .uri="/api/ota",          .method=HTTP_POST, .handler=h_ota };          httpd_register_uri_handler(s_http, &u);
     u = (httpd_uri_t){ .uri="/api/radio",        .method=HTTP_POST, .handler=h_radio };        httpd_register_uri_handler(s_http, &u);
+#if defined(CONFIG_CDC2NET_SOURCE_USB)
+    u = (httpd_uri_t){ .uri="/api/cul/dfu",     .method=HTTP_GET,  .handler=h_cul_dfu_get }; httpd_register_uri_handler(s_http, &u);
+    u = (httpd_uri_t){ .uri="/api/cul/dfu",     .method=HTTP_POST, .handler=h_cul_dfu };     httpd_register_uri_handler(s_http, &u);
+    u = (httpd_uri_t){ .uri="/api/cul/dfu/enter",.method=HTTP_POST,.handler=h_cul_dfu_enter }; httpd_register_uri_handler(s_http, &u);
+#endif
     u = (httpd_uri_t){ .uri="/api/update/check", .method=HTTP_GET,  .handler=h_update_check }; httpd_register_uri_handler(s_http, &u);
     u = (httpd_uri_t){ .uri="/api/update/check", .method=HTTP_POST, .handler=h_update_check }; httpd_register_uri_handler(s_http, &u);
     u = (httpd_uri_t){ .uri="/api/update/install",.method=HTTP_POST,.handler=h_update_install }; httpd_register_uri_handler(s_http, &u);
