@@ -154,6 +154,64 @@ reads the chip version — which is logged and skipped, leaving WiFi unaffected.
 > stuck; a restart brings it up normally. Booting with the cable already
 > connected, or plugging it in before the access point appears, is unaffected.
 
+## Diagnosing a dropped uplink
+
+A gateway that loses its uplink does not just lose a few packets: the
+coordinator's TCP session dies with it, and the host notices only when it next
+sends something. Zigbee2MQTT's ZBOSS adapter has no reconnect for the TCP
+transport — an unexpected close is reported as `disconnected`, and
+Zigbee2MQTT's answer to an adapter disconnect is to stop and let its supervisor
+restart it. So the visible symptom is "Zigbee2MQTT stopped", several layers
+away from the cause (`tostmann/esp-coordinator#12`).
+
+To make the cause nameable, the device keeps three things:
+
+**The reason code in the log.** A station disconnect carries a reason code and
+the RSSI at that moment; both are logged, on the retry path and on the give-up
+path:
+
+```
+W (41224) net: STA disconnected — reason 15 4WAY_HANDSHAKE_TIMEOUT, rssi -60 — retry 2/8
+E (60114) net: STA gave up after 8 retries (last reason 205 CONNECTION_FAIL) — falling back to SoftAP
+```
+
+The code is what separates the cases, and they need opposite fixes: an
+AP-initiated deauth or disassoc (2, 3, 4, 5, 8) means the access point sent us
+away — look at the AP, its channel management, its client limits. A beacon
+timeout (200) means we stopped hearing it — look at range, interference,
+channel. Codes 201-205 mean the association never completed in the first
+place, 15 most often being a wrong pre-shared key.
+
+**A history that survives until the next reboot.** `/api/status` carries the
+last eight disconnects under `wifi.disc`, and the web UI shows them in the WiFi
+tile as "Drops since boot":
+
+```json
+"disc": { "total": 9,
+          "last": [ {"ts": 57674, "reason": 15, "name": "4WAY_HANDSHAKE_TIMEOUT", "rssi": -65} ] }
+```
+
+`total` counts every drop since boot and keeps climbing past the eight the ring
+holds. `ts` is milliseconds since boot, the same time base as the log lines and
+as `sys.uptime_s`, so entries line up with both. This is RAM only and is gone
+after a restart — deliberately: the question it answers is "what happened last
+night", and a reboot is the point where that question restarts anyway. Its
+value is that a drop at 3 a.m. is still readable the next morning, with no
+browser tab left open and no log window wide enough.
+
+**A log ring sized for the wait.** `CDC2NET_LOG_BUFFER_LINES` sets how many
+lines `/api/log` keeps; it costs 204 bytes of static RAM per line. The default
+is 128, and this mission raises it to 256 — at the ten-second `STATUS` cadence
+that is roughly forty minutes of history instead of twenty. The original field
+report arrived without its own cause: the reporter's excerpt began at the
+re-association because everything before it had already been pushed out of a
+128-line ring.
+
+> Note that the web UI's log card appends what it has polled, client-side. A
+> browser tab left open therefore accumulates far more than the device itself
+> retains — useful when waiting for a rare event, and the reason the history
+> above exists for everyone who cannot leave a tab open for a day.
+
 ## OTA channel separation
 
 The mission's manifest and firmware URLs are baked into the image via
