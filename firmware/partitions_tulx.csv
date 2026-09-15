@@ -1,0 +1,12 @@
+# TULX32 shop layout with a recovery app (plan recovery_plan_tulx_2026-09-14.md, 2.1).
+# Frozen at delivery: bootloader, this table, factory, prov, rcfg.
+# Name,   Type, SubType,  Offset,   Size
+nvs,      data, nvs,      0x9000,   0x5000
+otadata,  data, ota,      0xE000,   0x2000
+ota_0,    app,  ota_0,    0x10000,  0x278000
+storage,  data, littlefs, 0x288000, 0x20000
+actor_db, data, nvs,      0x2A8000, 0x8000
+factory,  app,  factory,  0x2B0000, 0x140000
+prov,     data, 0x40,     0x3F0000, 0x1000
+rcfg,     data, 0x41,     0x3F1000, 0x1000
+coredump, data, coredump, 0x3F2000, 0xE000

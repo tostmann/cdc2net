@@ -12,7 +12,7 @@ set(cdc2net_srcs
     "main.c" "bridge.c" "sink_tcp.c"
     "net.c" "improv_glue.cpp" "mdns_glue.c" "config.c"
     "log_buffer.c" "ota_check.c" "webui.c" "health.c"
-    "serialcfg.c")
+    "serialcfg.c" "tulx_glue.c")
 set(cdc2net_reqs
     esp_wifi esp_event esp_netif nvs_flash lwip
     driver esp_timer

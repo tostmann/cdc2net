@@ -333,6 +333,12 @@ static void ota_install_task(void *arg)
 esp_err_t ota_install_start(void)
 {
     mtx_ensure();
+#ifdef TULX_BUILD
+    // TULX32: one application slot, and esp_ota_begin() refuses the running
+    // partition.  Firmware is installed from the recovery system instead.
+    install_set_err("this product installs firmware from its recovery system");
+    return ESP_ERR_NOT_SUPPORTED;
+#endif
     if (s_install == 1) return ESP_ERR_INVALID_STATE;   // already running (single web task)
     xSemaphoreTake(s_mtx, portMAX_DELAY);
     s_install_err[0] = '\0';

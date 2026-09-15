@@ -42,6 +42,7 @@
 #include "log_buffer.h"
 #include "webui.h"
 #include "config.h"
+#include "tulx_glue.h"
 #include "health.h"
 #include "app_wdt.h"
 #ifdef CDC2NET_HUBPROBE
@@ -227,6 +228,13 @@ void app_main(void)
         s_main_wdt_task = xTaskGetCurrentTaskHandle();
         s_wdt_on        = true;
     }
+
+#ifdef TULX_BUILD
+    // LAST, and only once start-up is through: the TULX32 bootloader installs a
+    // marked image on probation, and an unconfirmed image falls back to the
+    // recovery on its next reset.
+    tulx_confirm_running();
+#endif
 
     while (1) {
         for (int i = 0; i < 10; i++) {       // 10 x 1 s = 10 s STATUS cadence

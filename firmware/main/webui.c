@@ -23,6 +23,7 @@
 #include "sink_tcp.h"
 #include "log_buffer.h"
 #include "ota_check.h"
+#include "tulx_glue.h"
 #include "config.h"
 #include "health.h"
 #include "app_wdt.h"
@@ -355,6 +356,24 @@ static esp_err_t h_reboot(httpd_req_t *req)
     xTaskCreate(delayed_reboot_task, "reboot", 2048, NULL, 5, NULL);
     return ESP_OK;
 }
+
+#ifdef TULX_BUILD
+// TULX32: the way back into the recovery system without the S1 button.
+static void enter_recovery_task(void *arg)
+{
+    vTaskDelay(pdMS_TO_TICKS(300));   // let the response reach the browser
+    tulx_enter_recovery();
+    vTaskDelete(NULL);
+}
+
+static esp_err_t h_recovery(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, "{\"ok\":true}");
+    xTaskCreate(enter_recovery_task, "torecovery", 3072, NULL, 5, NULL);
+    return ESP_OK;
+}
+#endif
 
 // ───── OTA — raw firmware.bin body, streamed into the passive OTA slot ──
 
@@ -1065,6 +1084,15 @@ static esp_err_t h_update_install(httpd_req_t *req)
         return httpd_resp_send(req, "{\"installing\":true,\"note\":\"already running\"}",
                                HTTPD_RESP_USE_STRLEN);
     }
+#ifdef TULX_BUILD
+    if (e == ESP_ERR_NOT_SUPPORTED) {
+        // Say where firmware comes from on this product instead of a bare 500.
+        httpd_resp_set_status(req, "409 Conflict");
+        return httpd_resp_sendstr(req,
+            "{\"error\":\"this product installs firmware from its recovery system; "
+            "POST /api/recovery to restart into it\"}");
+    }
+#endif
     if (e != ESP_OK) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "install start failed");
         return ESP_FAIL;
@@ -1097,6 +1125,9 @@ esp_err_t webui_init(uint16_t port)
     u = (httpd_uri_t){ .uri="/api/status",       .method=HTTP_GET,  .handler=h_status };       httpd_register_uri_handler(s_http, &u);
     u = (httpd_uri_t){ .uri="/api/log",          .method=HTTP_GET,  .handler=h_log };          httpd_register_uri_handler(s_http, &u);
     u = (httpd_uri_t){ .uri="/api/reboot",       .method=HTTP_POST, .handler=h_reboot };       httpd_register_uri_handler(s_http, &u);
+#ifdef TULX_BUILD
+    u = (httpd_uri_t){ .uri="/api/recovery",     .method=HTTP_POST, .handler=h_recovery };     httpd_register_uri_handler(s_http, &u);
+#endif
     u = (httpd_uri_t){ .uri="/api/ota",          .method=HTTP_POST, .handler=h_ota };          httpd_register_uri_handler(s_http, &u);
     u = (httpd_uri_t){ .uri="/api/radio",        .method=HTTP_POST, .handler=h_radio };        httpd_register_uri_handler(s_http, &u);
 #if defined(CONFIG_CDC2NET_SOURCE_USB)

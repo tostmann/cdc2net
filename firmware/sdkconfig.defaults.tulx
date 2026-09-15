@@ -1,0 +1,8 @@
+# TULX32 overlay.  The user has no USB on this product and the bench reaches it
+# over UART0 on the debug adapter, so the console must not sit on the
+# USB-Serial-JTAG port the TUL stick uses — a TULX built that way is mute
+# (bench 2026-09-15: nothing after the IDF start-up banner).
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_ESP_CONSOLE_UART_NUM=0
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=n
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y

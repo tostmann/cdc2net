@@ -297,6 +297,27 @@ esp_err_t net_init(void)
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_cb, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT,   IP_EVENT_STA_GOT_IP, &event_cb, NULL));
 
+#ifdef TULX_BUILD
+    // TULX32: the recovery system is where this product is commissioned, and it
+    // stores the network through the Wi-Fi driver (nvs.net80211) — which
+    // esp_wifi_init() above has just loaded.  Adopt that when this application
+    // has none of its own, so the user provisions ONCE in the recovery instead
+    // of once per application.
+    //
+    // Bench 2026-09-15: without this a freshly installed app sat in "awaiting
+    // Improv" although the credentials were already on the device — same NVS
+    // partition, but the driver's namespace rather than ours.
+    if (!have_creds) {
+        wifi_config_t drv = { 0 };
+        if (esp_wifi_get_config(WIFI_IF_STA, &drv) == ESP_OK && drv.sta.ssid[0] != '\0') {
+            snprintf(s_ssid_buf, sizeof(s_ssid_buf), "%.32s", (const char *)drv.sta.ssid);
+            snprintf(s_pass_buf, sizeof(s_pass_buf), "%.64s", (const char *)drv.sta.password);
+            have_creds = true;
+            ESP_LOGI(TAG, "creds adopted from the recovery (SSID='%s')", s_ssid_buf);
+        }
+    }
+#endif
+
     compute_names();
     esp_netif_set_hostname(s_sta_netif, s_host_buf);
 
@@ -338,6 +359,17 @@ esp_err_t net_init(void)
 
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wc));
         ESP_ERROR_CHECK(esp_wifi_start());
+#ifdef TULX_BUILD
+    /* TULX32 is bus-powered and the coupling current through the 10k FANIN is
+     * the bottleneck: KNX traffic plus WLAN passed up to 18.5 dBm, 802.11b at
+     * 20 dBm resets the board (load test 2026-09-14, plan R10).  The default
+     * max is 20 dBm, so an uncapped build on this product is a reset waiting
+     * for the first busy moment.  18 dBm = 72 quarter-dBm. */
+        esp_wifi_set_max_tx_power(72);
+        int8_t qdbm = 0;
+        if (esp_wifi_get_max_tx_power(&qdbm) == ESP_OK)
+            ESP_LOGW(TAG, "TX power capped at %.2f dBm (bus-power limit)", qdbm / 4.0);
+#endif
         ESP_LOGI(TAG, "STA starting, SSID='%s' (host='%s')", s_ssid_buf, s_host_buf);
 
         // Wart-3 fix: run the periodic STA supervisor from BOOT (not only after
@@ -358,6 +390,9 @@ esp_err_t net_init(void)
         // immer noch keine Verbindung steht.
         ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
         ESP_ERROR_CHECK(esp_wifi_start());
+#ifdef TULX_BUILD
+        esp_wifi_set_max_tx_power(72);      /* see above: 18 dBm on bus power */
+#endif
         ESP_LOGW(TAG, "no WiFi creds — STA idle, awaiting Improv (deferred AP fallback in 130 s)");
         xTaskCreate(deferred_ap_fallback_task, "ap_fallback", 3072, NULL, 4, NULL);
     }
