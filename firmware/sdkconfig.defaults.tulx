@@ -6,3 +6,9 @@ CONFIG_ESP_CONSOLE_UART_DEFAULT=y
 CONFIG_ESP_CONSOLE_UART_NUM=0
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=n
 CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
+# IDF appends sdkconfig.defaults.esp32c6 for every C6 build, and that file
+# carries the C6 EUL/TUL carrier's M24C32 config EEPROM.  The TULX never has
+# one (Dirk 2026-09-21): no tile, and no I2C probe on GPIO 22/23 with the
+# write-protect line on GPIO 15 driven as an output.
+# CONFIG_CDC2NET_EEPROM_M24C32 is not set

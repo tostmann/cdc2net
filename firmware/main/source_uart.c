@@ -71,7 +71,11 @@ static const char *TAG = "src-uart";
 // TCM515.  Line coding is still per-port overridable (NVS default + RFC2217).
 #ifdef UART_MODULE_NCN5130
   #define UART_MODULE_NAME   "NCN5130"
-  #define UART_MODULE_LABEL  "TUL NCN5130 (UART)"
+  #ifdef TULX_BUILD                     // same transceiver, different product
+    #define UART_MODULE_LABEL  "TULX NCN5130 (UART)"
+  #else
+    #define UART_MODULE_LABEL  "TUL NCN5130 (UART)"
+  #endif
   #define UART_KEY           "ncn5130"   // single onboard device → fixed key
   #define UART_DEF_BAUD      38400        // KNX TP-UART host baud (= ip4knx)
   #define UART_DEF_PARITY    2            // even  ┐

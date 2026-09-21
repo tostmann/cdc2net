@@ -23,10 +23,13 @@
 #include "cJSON.h"
 
 #include "version.h"
+#include "tulx_glue.h"
 
 static const char *TAG = "ota_check";
 
-#define MAX_RESP_BYTES   2048   // manifest.json ist ~500 B — 2K reicht mit headroom
+#define MAX_RESP_BYTES   2048   // manifest.json ist ~500 B — 2K reicht mit headroom;
+                                // the TULX product manifest costs ~290 B per application
+                                // (855 B for three) — raise this before it lists seven
 #define VER_STR_MAX      24
 #define OTA_INSTALL_TIMEOUT_S 300   // wall-clock cap on the download loop: perform()
                                     // returns IN_PROGRESS on a read EAGAIN too, so a server
@@ -179,12 +182,29 @@ esp_err_t ota_check_refresh(void)
         xSemaphoreGive(s_mtx);
         return ESP_FAIL;
     }
+#ifdef TULX_BUILD
+    // The TULX product manifest lists every application the recovery offers
+    // ({"images":[{"name","version","file",...}]}); ours is the one with our
+    // file name.  A check against the stick channel would compare with a
+    // different product's release.
+    cJSON *ver = NULL, *it = NULL;
+    cJSON_ArrayForEach(it, cJSON_GetObjectItemCaseSensitive(root, "images")) {
+        cJSON *f = cJSON_GetObjectItemCaseSensitive(it, "file");
+        if (cJSON_IsString(f) && strcmp(f->valuestring, TULX_MANIFEST_FILE) == 0) {
+            ver = cJSON_GetObjectItemCaseSensitive(it, "version");
+            break;
+        }
+    }
+    const char *no_ver = "manifest lists no " TULX_MANIFEST_FILE;
+#else
     cJSON *ver = cJSON_GetObjectItemCaseSensitive(root, "version");
+    const char *no_ver = "no version field";
+#endif
     if (!cJSON_IsString(ver) || !ver->valuestring) {
         cJSON_Delete(root);
         xSemaphoreTake(s_mtx, portMAX_DELAY);
         s_state.state = OTA_CHECK_ERROR;
-        snprintf(s_state.error, sizeof(s_state.error), "no version field");
+        snprintf(s_state.error, sizeof(s_state.error), "%s", no_ver);
         s_state.last_check_us = esp_timer_get_time();
         xSemaphoreGive(s_mtx);
         return ESP_FAIL;

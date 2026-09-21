@@ -98,7 +98,11 @@ static esp_err_t h_index(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
-    httpd_resp_set_hdr(req, "Cache-Control", "max-age=300");
+    // no-cache, not a max-age: after a firmware update the browser must not keep
+    // running the previous page against the new API for minutes (seen on the
+    // TULX: the old page kept probing an endpoint the new build no longer asks
+    // for, and showed no recovery button).  24 KB gzip on a LAN costs nothing.
+    httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
     return httpd_resp_send(req, (const char *)index_html_gz, index_html_gz_len);
 }
 
@@ -231,6 +235,19 @@ static esp_err_t h_status(httpd_req_t *req)
     bool     feat_eeprom = false;
     unsigned ee_state = 0, ee_size = 0, ee_page = 0;
 #endif
+    // The WebUI shows a tile only where the build has the thing behind it,
+    // instead of probing an endpoint and hiding the tile on a 404: that probe
+    // ran on every status poll and filled the log ring with httpd warnings.
+#if defined(CONFIG_CDC2NET_SOURCE_USB)
+    bool     feat_dfu = true;           // USB host: a CUL-class stick can be reflashed
+#else
+    bool     feat_dfu = false;
+#endif
+#ifdef TULX_BUILD
+    bool     feat_recovery = true;      // firmware comes from the recovery system
+#else
+    bool     feat_recovery = false;
+#endif
 
     // WiFi-Abriss-Historie: beantwortet "was ist heute Nacht passiert" ohne
     // offenes Log-Tab.  8 Eintraege a ~62 Zeichen -> ~0,5 KB, deshalb ist buf
@@ -255,7 +272,7 @@ static esp_err_t h_status(httpd_req_t *req)
     int n = snprintf(buf, sizeof(buf),
         "{"
           "\"fw\":{\"version\":\"%s\",\"built\":\"%s\"},"
-          "\"features\":{\"eeprom\":%s},"
+          "\"features\":{\"eeprom\":%s,\"dfu\":%s,\"recovery\":%s},"
           "\"wifi\":{\"up\":%s,\"ssid\":\"%s\",\"ip\":\"%s\",\"gw\":\"%s\","
                   "\"ap\":%s,\"host\":\"%s\","
                   "\"disc\":{\"total\":%u,\"last\":[%s]}},"
@@ -281,6 +298,8 @@ static esp_err_t h_status(httpd_req_t *req)
         "}",
         FW_VERSION_STRING, FW_BUILD_DATE,
         feat_eeprom ? "true" : "false",
+        feat_dfu ? "true" : "false",
+        feat_recovery ? "true" : "false",
         net_wifi_connected() ? "true" : "false", ssid_esc, net_wifi_ip_str(), net_wifi_gw_str(),
         net_is_ap_mode() ? "true" : "false", net_hostname(),
         (unsigned)net_disc_total(), disc_json,
@@ -519,6 +538,17 @@ static esp_err_t h_ota_body(httpd_req_t *req)
 // wrapper exists so every early return in the body is covered.
 static esp_err_t h_ota(httpd_req_t *req)
 {
+#ifdef TULX_BUILD
+    // One application slot: esp_ota_begin() refuses the running partition, so
+    // an upload here could only fail late with a bare 500.  Say where firmware
+    // comes from on this product instead, before a byte of the body is read.
+    httpd_resp_set_status(req, "409 Conflict");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Connection", "close");
+    return httpd_resp_sendstr(req,
+        "{\"error\":\"this product installs firmware from its recovery system; "
+        "POST /api/recovery to restart into it\"}");
+#endif
     app_wdt_pause_main();
     esp_err_t ret = h_ota_body(req);
     app_wdt_resume_main();

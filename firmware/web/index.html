@@ -165,8 +165,15 @@
         <button id="b-install" type="button">Install from server</button>
       </div>
       <div class="msg" id="m-upd"></div>
+      <div id="rec-block" style="display:none">
+        <div class="msg">This device installs firmware from its recovery system. Restart into it and choose
+          &ldquo;Check online&rdquo; there, or upload a file. Without this page: hold the button for 5 seconds
+          while connecting the KNX bus.</div>
+        <div class="btnrow"><button id="b-rec" type="button">Restart into recovery</button></div>
+        <div class="msg" id="m-rec"></div>
+      </div>
     </details>
-    <details><summary>Manual flash (.bin)</summary>
+    <details id="d-ota"><summary>Manual flash (.bin)</summary>
       <div class="btnrow"><input type="file" id="otafile" accept=".bin"><button id="b-ota" type="button">Flash</button></div>
       <div class="msg" id="m-ota"></div>
     </details>
@@ -209,7 +216,7 @@ function fill(id,rows){$(id).innerHTML=rows.join("");}
 function msg(id,t,c){const e=$(id);e.textContent=t;e.className="msg"+(c?(" "+c):"");}
 async function postJSON(u,o){return fetch(u,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(o)});}
 
-let cfgInit=false, sLastKey=null;
+let cfgInit=false, sLastKey=null, lastIp="";
 async function refresh(){
   let j;
   try{ j=await (await fetch("/api/status",{cache:"no-store"})).json(); }
@@ -252,7 +259,7 @@ async function refresh(){
   } else $("card-radio").style.display="none";
   // Stick-Firmware: nur zeigen, wo es ueberhaupt einen USB-Wirt gibt. Der
   // Endpunkt fehlt in UART-Bauformen, ein Fehlschlag blendet die Karte aus.
-  try{
+  if((j.features||{}).dfu===true){ try{
     const d=await (await fetch("/api/cul/dfu",{cache:"no-store"})).json();
     $("card-dfu").style.display="";
     fill("t-dfu",[
@@ -265,8 +272,10 @@ async function refresh(){
                              :'<span class="off">CHANGED — settings lost</span>')]:[]),
       ...(d.msg?[row("Last message", d.msg)]:[]),
     ]);
-  }catch(e){ $("card-dfu").style.display="none"; }
+  }catch(e){ $("card-dfu").style.display="none"; } }
+  else $("card-dfu").style.display="none";
   const w=j.wifi||{}, e=j.eth||{};
+  if(w.ip&&w.ip!=="0.0.0.0") lastIp=w.ip;
   fill("t-wifi",[
     row("State", w.up?'<span class="on">connected</span>':(w.ap?'<span class="ap">AP mode</span>':'<span class="off">down</span>')),
     row("IP", w.ip), row("Gateway", w.gw), row("SSID", w.ssid||"(none)"),
@@ -309,6 +318,12 @@ async function refresh(){
   // EEPROM tile — hidden unless the firmware reports the M24C32 RMW backend
   // present (features.eeprom===true).  On the bridge it stays off.
   const feat=j.features||{};
+  // One application slot (TULX): no install or upload here, the recovery
+  // system does that.  The check stays — it reads the recovery's own list.
+  const rec=feat.recovery===true;
+  $("b-install").style.display=rec?"none":"";
+  $("d-ota").style.display=rec?"none":"";
+  $("rec-block").style.display=rec?"":"none";
   if(feat.eeprom===true){
     $("card-eeprom").style.display="";
     const ee=j.eeprom||{}, EE={0:"absent",1:"present + RMW OK",2:"present, RMW failed"};
@@ -426,10 +441,19 @@ $("b-check").onclick=async()=>{
   msg("m-upd","checking…");
   try{
     const u=await (await fetch("/api/update/check?refresh=1")).json();
-    msg("m-upd", u.state==="available"?("update "+u.available+" available (current "+u.current+")")
+    const via=$("rec-block").style.display===""?" — install it from the recovery":"";
+    msg("m-upd", u.state==="available"?("update "+u.available+" available (current "+u.current+")"+via)
       : u.state==="up_to_date"?("up to date (v"+u.current+")")
       : u.state==="error"?("error: "+u.error):u.state, u.state==="available"?"ok":"");
   }catch(e){ msg("m-upd","check failed","err"); }
+};
+$("b-rec").onclick=async()=>{
+  if(!confirm("Restart into the recovery system? The bridge stops until you start the application again there, or after 15 minutes without activity."))return;
+  // The recovery answers on the IP address only (no mDNS, Host header pinned).
+  const to="http://"+(lastIp||location.hostname)+"/";
+  msg("m-rec","restarting — the recovery page opens at "+to+" in a few seconds…");
+  try{ await fetch("/api/recovery",{method:"POST"}); }catch(e){}
+  setTimeout(()=>{ location.href=to; }, 8000);
 };
 $("b-install").onclick=async()=>{
   if(!confirm("Pull firmware from the release server and flash it?"))return;
