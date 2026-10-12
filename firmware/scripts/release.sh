@@ -255,6 +255,12 @@ got_id=$(printf '%d' "0x$(xxd -p -s 12 -l 1 "$BUILD_DIR/firmware.bin")")
 }
 echo "   firmware.bin chip_id = $got_id ($CHIP)  ✔"
 
+# esp-web-tools 10.x bricht bei 99 % ab, wenn ein Part komprimiert auf einem
+# 1-Byte-Block endet — das Gerät bootet danach nicht.  factory.bin dann mit
+# 0xFF bis zur nächsten 4-KiB-Grenze auffüllen (in der App-Partition), BEVOR
+# MD5SUMS entsteht; Details in webflash_last_block.py.
+python3 "$REPO_ROOT/firmware/scripts/webflash_last_block.py" --fix "$FACTORY"
+
 # OTA-URL ↔ Deploy-Ort Invariante: die ins Image gebackene OTA_FIRMWARE_URL MUSS
 # genau dorthin zeigen, wohin release.sh/deploy.sh dieses Target legen — sonst
 # pullt das Gerät im Feld die falsche (Cross-Mission) oder gar keine Firmware.
@@ -311,6 +317,10 @@ fi
 python3 "$REPO_ROOT/firmware/scripts/merge_manifest.py" \
     "$OUT_TARGET/manifest.json" "$MANIFEST_NAME" "$VERSION" \
     "$CHIPFAMILY" "$FACTORY_NAME" "$FIRMWARE_NAME" "$FW_MD5" "${EXTRA_PARTS[@]}"
+
+# Every webflash part of the mission (sibling chip, radio_h2.bin) must clear
+# the esp-web-tools 1-byte final-block check too; radio_h2.bin cannot be padded.
+python3 "$REPO_ROOT/firmware/scripts/webflash_last_block.py" --manifest "$OUT_TARGET/manifest.json"
 
 # ───── MD5SUMS — regenerate from ALL files in the (merged) target dir ────
 ( cd "$OUT_TARGET" && md5sum -- *.bin manifest.json > MD5SUMS )

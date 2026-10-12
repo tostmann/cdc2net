@@ -64,6 +64,10 @@ for mf in "${MANIFESTS[@]}"; do
   [ -f "$d/MD5SUMS" ] || { echo "ABORT: ${rel:-<root>}/MD5SUMS missing next to manifest.json" >&2; exit 1; }
   ( cd "$d" && md5sum -c MD5SUMS >/dev/null ) \
     || { echo "ABORT: MD5SUMS mismatch in ${rel:-<root>} — rebuild before deploy" >&2; exit 1; }
+  # esp-web-tools 10.x aborts at 99 % on a part whose compressed form ends in
+  # a 1-byte block (webflash_last_block.py); release.sh pads factory images.
+  wl=$(python3 "$SCRIPT_DIR/webflash_last_block.py" --manifest "$mf" 2>&1) \
+    || { echo "$wl" >&2; echo "ABORT: ${rel:-<root>} has a part esp-web-tools cannot flash — rerun release.sh" >&2; exit 1; }
   v=$(grep -oE '"version"[[:space:]]*:[[:space:]]*"[^"]+"' "$mf" | head -1 | sed -E 's/.*"([^"]+)"$/\1/')
   echo "$v" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' \
     || { echo "ABORT: ${rel:-<root>} manifest version '$v' is not MAJOR.MINOR.BUILD" >&2; exit 2; }
