@@ -124,9 +124,10 @@
   <div class="card cat-device" id="card-radio" style="display:none"><h2>Zigbee radio</h2>
     <table id="t-radio"></table>
     <details><summary>Update radio firmware</summary>
-      <p style="color:var(--mut);font-size:.85em;margin:.3em 0">Upload the radio's merged factory image (radio_h2.bin). It is staged
-      into the radio_fw partition; the device reboots and flashes the radio if the
-      image differs from what the radio is running (~25 s).</p>
+      <p style="color:var(--mut);font-size:.85em;margin:.3em 0">Upload this gateway's merged radio image,
+      radio_h2-&lt;version&gt;.bin from install.busware.de/cdc2net/zbgw/ (generic ESP32-H2 images
+      use other UART pins). It is staged into the radio_fw partition; the device reboots and
+      flashes the radio if the image differs from what the radio is running (~25 s).</p>
       <div class="btnrow"><input type="file" id="radiofile" accept=".bin"><button id="b-radio" type="button">Flash</button></div>
       <div class="msg" id="m-radio"></div>
     </details></div>
