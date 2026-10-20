@@ -29,7 +29,7 @@ def main():
     mpath, name, version, chipfamily, factory, firmware, fw_md5 = sys.argv[1:8]
     # Optional trailing args: extra flash parts for THIS chip's webflash entry,
     # each "path@offset" (offset decimal or 0x-hex).  Used by the zbgw mission
-    # to append the companion-radio image (radio_h2.bin@0x620000) so ONE
+    # to append the companion-radio image (radio_h2-<version>.bin@0x620000) so ONE
     # manifest drives the two-chip factory webflash AND the in-device OTA.
     extra_parts = []
     for spec in sys.argv[8:]:

@@ -303,23 +303,56 @@ FW_MD5=$(md5sum "$FIRMWARE" | awk '{print $1}')
 # H2 build staged for radio_flash).  Hard-ABORT if missing/invalid — a zbgw
 # release without the radio image would flash gateways with an empty
 # radio_fw and no NCP.
+#
+# Published as radio_h2-<radio version>.bin, never under a fixed name: .bin
+# files are served without Cache-Control (a browser may reuse a cached part
+# whose name did not change), and a published name keeps its bytes — the
+# esp-coordinator#18 workaround links the old radio_h2.bin.  Same name with
+# other bytes already in the mission dir → ABORT.  Also asserted: the radio
+# bootloader header declares 2 MB; the board's ESP32-H2 also ships as a 2 MB
+# part, and a header claiming more stops it at start-up (esp-coordinator#18).
 EXTRA_PARTS=()
 if [ "$MISSION" = "zbgw" ]; then
   RADIO_SRC="$REPO_ROOT/firmware/radio_fw/radio_h2.bin"
   [ -s "$RADIO_SRC" ] || { echo "ABORT: $RADIO_SRC fehlt/leer (zbgw braucht den Radio-Blob)" >&2; exit 2; }
   head -c1 "$RADIO_SRC" | od -An -tx1 | grep -q e9 \
     || { echo "ABORT: $RADIO_SRC hat kein 0xE9-Image-Magic" >&2; exit 2; }
-  cp "$RADIO_SRC" "$OUT_TARGET/radio_h2.bin"
-  EXTRA_PARTS+=("radio_h2.bin@0x620000")
-  echo "   radio part: radio_h2.bin ($(stat -c%s "$RADIO_SRC") B) @0x620000"
+  # Version from the app descriptor (app @0x20000, esp_app_desc_t @+0x20 — the
+  # offsets radio_flash.c reads); flash size = high nibble of header byte 3.
+  RADIO_VER=$(python3 - "$RADIO_SRC" <<'PY'
+import re, struct, sys
+def die(msg):
+    print("ABORT: " + msg, file=sys.stderr); sys.exit(2)
+img = open(sys.argv[1], "rb").read()
+desc = 0x20000 + 0x20
+if len(img) < desc + 48 or struct.unpack_from("<I", img, desc)[0] != 0xABCD5432:
+    die(f"{sys.argv[1]} hat keinen App-Deskriptor @0x{desc:x}")
+ver = img[desc + 16:desc + 48].split(b"\0")[0].decode("ascii", "replace")
+if not re.fullmatch(r"[0-9A-Za-z._+-]+", ver):
+    die(f"Radio-Version {ver!r} taugt nicht als Dateiname")
+size = img[3] >> 4                     # 0 = 1 MB, 1 = 2 MB, 2 = 4 MB, ...
+if size != 1:
+    die(f"Radio-Bootloader-Header deklariert {1 << size} MB Flash, erwartet 2 MB — "
+        "2-MB-H2 starten damit nicht (esp-coordinator#18)")
+print(ver)
+PY
+)
+  RADIO_PART="radio_h2-$RADIO_VER.bin"
+  if [ -e "$OUT_TARGET/$RADIO_PART" ] && ! cmp -s "$RADIO_SRC" "$OUT_TARGET/$RADIO_PART"; then
+    echo "ABORT: $OUT_TARGET/$RADIO_PART existiert mit anderem Inhalt — ein veröffentlichter Part-Name behält seine Bytes; Radio-Version anheben" >&2
+    exit 2
+  fi
+  cp "$RADIO_SRC" "$OUT_TARGET/$RADIO_PART"
+  EXTRA_PARTS+=("$RADIO_PART@0x620000")
+  echo "   radio part: $RADIO_PART ($(stat -c%s "$RADIO_SRC") B, 2-MB-Header) @0x620000"
 fi
 
 python3 "$REPO_ROOT/firmware/scripts/merge_manifest.py" \
     "$OUT_TARGET/manifest.json" "$MANIFEST_NAME" "$VERSION" \
     "$CHIPFAMILY" "$FACTORY_NAME" "$FIRMWARE_NAME" "$FW_MD5" "${EXTRA_PARTS[@]}"
 
-# Every webflash part of the mission (sibling chip, radio_h2.bin) must clear
-# the esp-web-tools 1-byte final-block check too; radio_h2.bin cannot be padded.
+# Every webflash part of the mission (sibling chip, radio part) must clear
+# the esp-web-tools 1-byte final-block check too; the radio part cannot be padded.
 python3 "$REPO_ROOT/firmware/scripts/webflash_last_block.py" --manifest "$OUT_TARGET/manifest.json"
 
 # ───── MD5SUMS — regenerate from ALL files in the (merged) target dir ────
