@@ -144,6 +144,15 @@
         production network on it.
     </div>
 
+    <h2>Updating only the radio</h2>
+    <p>
+        An installed gateway takes a new radio image without reinstalling the S3: download it here and
+        upload it in the gateway's web UI under <em>Zigbee radio → Update radio firmware</em>. The
+        gateway restarts, writes the radio and is reachable again after about 40 s; the Zigbee network
+        stays.
+    </p>
+    <p>Radio image: <a id="radio-dl" href="radio_h2-1.5.79.bin" download>radio_h2-1.5.79.bin</a></p>
+
     <h2>Notes on this hardware</h2>
     <ul>
         <li>Espressif's factory firmware makes the S3 <em>reflash the H2 back to</em>
@@ -168,6 +177,18 @@
         <a href="https://busware.de">busware.de</a>
     </footer>
 </div>
+<script>
+// Keep the radio download in step with manifest.json: the radio part is the one written to
+// radio_fw at 0x620000, and release.sh names it radio_h2-<version>.bin.  Without this the
+// static link above stays on the image it was written for.
+fetch("manifest.json", { cache: "no-store" }).then(r => r.json()).then(m => {
+    const part = (m.builds || []).flatMap(b => b.parts || []).find(p => p.offset === 0x620000);
+    if (!part) return;
+    const a = document.getElementById("radio-dl");
+    a.href = part.path;
+    a.textContent = part.path;
+}).catch(() => {});
+</script>
 <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
 </body>
 </html>
